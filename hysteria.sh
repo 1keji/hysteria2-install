@@ -52,6 +52,26 @@ realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
 }
 
+# 新增：检查并安装acme.sh依赖项
+check_dependencies(){
+    green "检查并安装acme.sh所需的依赖项..."
+    # 安装必要的包
+    if [[ $SYSTEM == "CentOS" ]]; then
+        ${PACKAGE_INSTALL[int]} socat
+    else
+        ${PACKAGE_INSTALL[int]} socat
+    fi
+
+    # 检查是否安装成功
+    for dep in curl wget sudo socat openssl; do
+        if [[ -z $(type -P $dep) ]]; then
+            red "依赖项 $dep 未能成功安装，请检查并重试。"
+            exit 1
+        fi
+    done
+    green "所有依赖项已正确安装。"
+}
+
 inst_cert(){
     green "Hysteria 2 协议证书申请方式如下："
     echo ""
@@ -64,16 +84,19 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        chmod -R 777 /root
-        
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        chmod -R 700 /root
+
+        # 确保证书文件权限
+        chmod 600 /root/cert.crt
+        chmod 600 /root/private.key
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
             green "检测到原有域名：$domain 的证书，正在应用"
             hy_domain=$domain
         else
+            check_dependencies  # 检查依赖项
+
             WARPv4Status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
             WARPv6Status=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
             if [[ $WARPv4Status =~ on|plus ]] || [[ $WARPv6Status =~ on|plus ]]; then
@@ -118,16 +141,30 @@ inst_cert(){
                     systemctl start cron
                     systemctl enable cron
                 fi
-                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
+                # 安装acme.sh
+                green "正在安装acme.sh..."
+                curl https://get.acme.sh | sh -s email=admin@$(echo $domain | awk -F. '{print $(NF-1)"."$NF}') || {
+                    red "acme.sh 安装失败，请检查网络连接和依赖项。"
+                    exit 1
+                }
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
                 if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure || {
+                        red "证书申请失败，请检查域名和服务器配置。"
+                        exit 1
+                    }
                 else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure || {
+                        red "证书申请失败，请检查域名和服务器配置。"
+                        exit 1
+                    }
                 fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc || {
+                    red "证书安装失败，请检查acme.sh配置。"
+                    exit 1
+                }
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
                     echo $domain > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
@@ -162,10 +199,14 @@ inst_cert(){
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
+        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
-        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 777 /etc/hysteria/cert.crt
-        chmod 777 /etc/hysteria/private.key
+        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com" || {
+            red "自签证书生成失败。"
+            exit 1
+        }
+        chmod 600 /etc/hysteria/cert.crt
+        chmod 600 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -306,7 +347,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir /root/hy
+    mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -604,7 +645,8 @@ menu() {
         4 ) changeconf ;;
         5 ) showconf ;;
         6 ) update_core ;;
-        * ) exit 1 ;;
+        0 ) exit 0 ;;
+        * ) red "无效的选项，请重新运行脚本并选择正确的选项。" && exit 1 ;;
     esac
 }
 
