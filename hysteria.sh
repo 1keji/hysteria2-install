@@ -50,7 +50,8 @@ fi
 
 realip(){
     # 尝试通过多个服务获取公共IP地址，提高可靠性
-    ip=$(curl -s4m8 https://ipinfo.io/ip) || ip=$(curl -s6m8 https://ipinfo.io/ip) || ip=$(curl -s4m8 https://api.ipify.org) || ip=$(curl -s6m8 https://api.ipify.org)
+    server_ipv4=$(curl -s4m8 https://ipinfo.io/ip) || server_ipv4=""
+    server_ipv6=$(curl -s6m8 https://ipinfo.io/ip) || server_ipv6=""
 }
 
 inst_cert(){
@@ -87,24 +88,21 @@ inst_cert(){
             read -p "请输入需要申请证书的域名：" domain
             [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
             green "已输入的域名：$domain" && sleep 1
-            domainIP=$(dig @8.8.8.8 +short "$domain" 2>/dev/null)
-            if [[ -z $domainIP ]]; then
-                domainIP=$(dig @2001:4860:4860::8888 +short "$domain" 2>/dev/null)
+
+            # 获取域名的 A 和 AAAA 记录
+            domain_ipv4=$(dig @8.8.8.8 +short "$domain" A)
+            domain_ipv6=$(dig @2001:4860:4860::8888 +short "$domain" AAAA)
+
+            # 检查域名 IP 是否匹配服务器 IP
+            match=false
+            if [[ -n "$domain_ipv4" && "$domain_ipv4" == "$server_ipv4" ]]; then
+                match=true
             fi
-            if [[ -z $domainIP ]]; then
-                red "未解析出 IP，请检查域名是否输入有误" 
-                yellow "是否尝试强行匹配？"
-                echo -e " ${GREEN}1. 是，将使用强行匹配"
-                echo -e " ${GREEN}2. 否，退出脚本"
-                read -p "请输入选项 [1-2]：" ipChoice
-                if [[ $ipChoice == 1 ]]; then
-                    yellow "将尝试强行匹配以申请域名证书"
-                else
-                    red "将退出脚本"
-                    exit 1
-                fi
+            if [[ -n "$domain_ipv6" && "$domain_ipv6" == "$server_ipv6" ]]; then
+                match=true
             fi
-            if [[ $domainIP == $ip ]]; then
+
+            if [[ $match == true ]]; then
                 ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
                 if [[ $SYSTEM == "CentOS" ]]; then
                     ${PACKAGE_INSTALL[int]} cronie
@@ -119,12 +117,12 @@ inst_cert(){
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
+                if [[ -n "$server_ipv6" ]]; then
+                    bash ~/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --listen-v6 --insecure
                 else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --insecure
                 fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                bash ~/.acme.sh/acme.sh --install-cert -d "${domain}" --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
                     echo $domain > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
