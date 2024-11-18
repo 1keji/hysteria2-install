@@ -41,16 +41,17 @@ done
 
 [[ -z $SYSTEM ]] && red "目前暂不支持你的VPS的操作系统！" && exit 1
 
-# 检查并安装curl
 if [[ -z $(type -P curl) ]]; then
     if [[ ! $SYSTEM == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
     fi
     ${PACKAGE_INSTALL[int]} curl
+    [[ $? -ne 0 ]] && red "安装curl失败，请手动安装后重试。" && exit 1
 fi
 
 realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
+    [[ -z $ip ]] && red "无法获取服务器IP，请检查网络连接。" && exit 1
 }
 
 inst_cert(){
@@ -65,9 +66,10 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        # 仅修改必要的文件权限，避免对整个/root目录设置过于宽松的权限
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        # 只设置必要的权限
+        chmod 700 /root
+        touch /root/cert.crt /root/private.key /root/ca.log
+        chmod 600 /root/cert.crt /root/private.key /root/ca.log
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
@@ -86,19 +88,19 @@ inst_cert(){
                 realip
             fi
 
-            read -p "请输入需要申请证书的域名：" domain
+            read -rp "请输入需要申请证书的域名：" domain
             [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
             green "已输入的域名：$domain" && sleep 1
             domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
+            if echo "$domainIP" | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
                 domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
             fi
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
+            if echo "$domainIP" | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
                 red "未解析出 IP，请检查域名是否输入有误" 
                 yellow "是否尝试强行匹配？"
                 green "1. 是，将使用强行匹配"
                 green "2. 否，退出脚本"
-                read -p "请输入选项 [1-2]：" ipChoice
+                read -rp "请输入选项 [1-2]：" ipChoice
                 if [[ $ipChoice == 1 ]]; then
                     yellow "将尝试强行匹配以申请域名证书"
                 else
@@ -108,42 +110,44 @@ inst_cert(){
             fi
             # 修改这里的IP比对逻辑，允许多个IP匹配
             if echo "$domainIP" | grep -qw "$ip"; then
-                # 安装必要的依赖，包括 dig 工具
                 ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
+                [[ $? -ne 0 ]] && red "安装依赖失败，请手动安装后重试。" && exit 1
                 if [[ $SYSTEM == "CentOS" ]]; then
-                    ${PACKAGE_INSTALL[int]} cronie bind-utils
+                    ${PACKAGE_INSTALL[int]} cronie
+                    [[ $? -ne 0 ]] && red "安装cronie失败，请手动安装后重试。" && exit 1
                     systemctl start crond
                     systemctl enable crond
                 else
-                    ${PACKAGE_INSTALL[int]} cron dnsutils
+                    ${PACKAGE_INSTALL[int]} cron
+                    [[ $? -ne 0 ]] && red "安装cron失败，请手动安装后重试。" && exit 1
                     systemctl start cron
                     systemctl enable cron
                 fi
+                green "请输入一个有效的邮箱地址，用于申请证书："
+                read -rp "邮箱: " acme_email
+                while [[ -z "$acme_email" ]]; do
+                    red "邮箱地址不能为空，请重新输入。"
+                    read -rp "邮箱: " acme_email
+                done
 
-                # 提示用户输入有效的邮箱地址
-                read -p "请输入您的邮箱用于 ACME 证书申请: " acme_email
-                if [[ -z "$acme_email" ]]; then
-                    red "未输入邮箱，无法执行操作！"
-                    exit 1
-                fi
-
-                # 安装 acme.sh
-                green "正在安装 acme.sh ..."
+                green "正在安装 Acme.sh..."
                 curl https://get.acme.sh | sh -s email="$acme_email"
-                if [[ ! -f /root/.acme.sh/acme.sh ]]; then
-                    red "acme.sh 安装失败，请检查网络或手动安装 acme.sh。"
-                    exit 1
-                fi
+                [[ $? -ne 0 ]] && red "Acme.sh 安装失败，请检查网络或手动安装后重试。" && exit 1
+                source ~/.bashrc
+                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+                [[ $? -ne 0 ]] && red "Acme.sh 配置失败，请检查安装过程。" && exit 1
 
-                source /root/.bashrc
-                bash /root/.acme.sh/acme.sh --upgrade --auto-upgrade
-                bash /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash /root/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --listen-v6 --insecure
+                if [[ -n $(echo "$ip" | grep ":") ]]; then
+                    bash ~/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --listen-v6 --insecure
                 else
-                    bash /root/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --insecure
                 fi
-                bash /root/.acme.sh/acme.sh --install-cert -d "${domain}" --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                [[ $? -ne 0 ]] && red "证书申请失败，请检查域名解析或其他问题。" && exit 1
+
+                bash ~/.acme.sh/acme.sh --install-cert -d "${domain}" --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                [[ $? -ne 0 ]] && red "证书安装失败，请检查 Acme.sh 输出日志。" && exit 1
+
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
                     echo "$domain" > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
@@ -151,10 +155,7 @@ inst_cert(){
                     green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
                     yellow "证书crt文件路径如下: /root/cert.crt"
                     yellow "私钥key文件路径如下: /root/private.key"
-                    hy_domain=$domain
-                else
-                    red "证书申请失败，请检查域名解析和防火墙设置。"
-                    exit 1
+                    hy_domain="$domain"
                 fi
             else
                 red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
@@ -166,24 +167,27 @@ inst_cert(){
             fi
         fi
     elif [[ $certInput == 3 ]]; then
-        read -p "请输入公钥文件 crt 的路径：" cert_path
+        read -rp "请输入公钥文件 crt 的路径：" cert_path
+        [[ -z $cert_path ]] && red "公钥文件路径不能为空！" && exit 1
         yellow "公钥文件 crt 的路径：$cert_path "
-        read -p "请输入密钥文件 key 的路径：" key_path
+        read -rp "请输入密钥文件 key 的路径：" key_path
+        [[ -z $key_path ]] && red "密钥文件路径不能为空！" && exit 1
         yellow "密钥文件 key 的路径：$key_path "
-        read -p "请输入证书的域名：" domain
+        read -rp "请输入证书的域名：" domain
+        [[ -z $domain ]] && red "域名不能为空！" && exit 1
         yellow "证书域名：$domain"
-        hy_domain=$domain
+        hy_domain="$domain"
 
-        chmod +rw "$cert_path"
-        chmod +rw "$key_path"
+        chmod +rw "$cert_path" "$key_path"
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
+        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 644 /etc/hysteria/cert.crt
+        chmod 600 /etc/hysteria/cert.crt
         chmod 600 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
@@ -193,12 +197,12 @@ inst_cert(){
 inst_port(){
     iptables -t nat -F PREROUTING >/dev/null 2>&1
 
-    read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
+    read -rp "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
     [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
     until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
         if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
             echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
-            read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
+            read -rp "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
             [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
         fi
     done
@@ -215,14 +219,14 @@ inst_jump(){
     echo ""
     read -rp "请输入选项 [1-2]: " jumpInput
     if [[ $jumpInput == 2 ]]; then
-        read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
-        read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
+        read -rp "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
+        read -rp "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
         if [[ $firstport -ge $endport ]]; then
             until [[ $firstport -le $endport ]]; do
                 if [[ $firstport -ge $endport ]]; then
-                    red "你设置的起始端口小于末尾端口，请重新输入起始和末尾端口"
-                    read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
-                    read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
+                    red "你设置的起始端口必须小于末尾端口，请重新输入起始和末尾端口"
+                    read -rp "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
+                    read -rp "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
                 fi
             done
         fi
@@ -236,13 +240,13 @@ inst_jump(){
 }
 
 inst_pwd(){
-    read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" auth_pwd
+    read -rp "设置 Hysteria 2 密码（回车跳过为随机字符）：" auth_pwd
     [[ -z $auth_pwd ]] && auth_pwd=$(date +%s%N | md5sum | cut -c 1-8)
     yellow "使用在 Hysteria 2 节点的密码为：$auth_pwd"
 }
 
 inst_site(){
-    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车maimai.sega.jp]：" proxysite
+    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [maimai.sega.jp]：" proxysite
     [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
     yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
 }
@@ -264,9 +268,12 @@ insthysteria(){
         ${PACKAGE_UPDATE[int]}
     fi
     ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
+    [[ $? -ne 0 ]] && red "安装基础软件包失败，请手动安装后重试。" && exit 1
 
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+    [[ $? -ne 0 ]] && red "下载 install_server.sh 失败，请检查网络。" && exit 1
     bash install_server.sh
+    [[ $? -ne 0 ]] && red "运行 install_server.sh 失败，请检查。" && exit 1
     rm -f install_server.sh
 
     if [[ -f "/usr/local/bin/hysteria" ]]; then
@@ -315,7 +322,7 @@ EOF
     fi
 
     # 给 IPv6 地址加中括号
-    if [[ -n $(echo $ip | grep ":") ]]; then
+    if [[ -n $(echo "$ip" | grep ":") ]]; then
         last_ip="[$ip]"
     else
         last_ip=$ip
@@ -405,9 +412,9 @@ rules:
   - MATCH,Proxy
 EOF
     url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $url > /root/hy/url.txt
+    echo "$url" > /root/hy/url.txt
     nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $nohopurl > /root/hy/url-nohop.txt
+    echo "$nohopurl" > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
     systemctl enable hysteria-server
@@ -470,13 +477,13 @@ hysteriaswitch(){
 changeport(){
     oldport=$(grep '^listen:' /etc/hysteria/config.yaml | awk '{print $2}' | awk -F ":" '{print $2}')
 
-    read -p "设置 Hysteria 2 端口[1-65535]（回车则随机分配端口）：" port
+    read -rp "设置 Hysteria 2 端口[1-65535]（回车则随机分配端口）：" port
     [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
 
     until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
         if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
             echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
-            read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
+            read -rp "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
             [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
         fi
     done
@@ -486,12 +493,12 @@ changeport(){
     sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
     # 更新 iptables 规则
-    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
-    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    iptables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
+    ip6tables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
 
     if [[ -n $firstport ]]; then
-        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+        ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
     fi
 
     netfilter-persistent save >/dev/null 2>&1
@@ -504,12 +511,12 @@ changeport(){
 }
 
 changepasswd(){
-    oldpasswd=$(grep '^auth:' /etc/hysteria/config.yaml | awk '{print $3}')
+    oldpasswd=$(grep '^password:' /etc/hysteria/config.yaml | awk '{print $2}')
 
-    read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
+    read -rp "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
     [[ -z $passwd ]] && passwd=$(date +%s%N | md5sum | cut -c 1-8)
 
-    sed -i "s/^auth: $oldpasswd/auth: $passwd/g" /etc/hysteria/config.yaml
+    sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
     sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
     sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
 
@@ -558,7 +565,7 @@ changeconf(){
     echo -e " ${GREEN}3.${PLAIN} 修改证书类型"
     echo -e " ${GREEN}4.${PLAIN} 修改伪装网站"
     echo ""
-    read -p " 请选择操作 [1-4]：" confAnswer
+    read -rp " 请选择操作 [1-4]：" confAnswer
     case $confAnswer in
         1 ) changeport ;;
         2 ) changepasswd ;;
@@ -582,8 +589,9 @@ showconf(){
 
 update_core(){
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+    [[ $? -ne 0 ]] && red "下载 install_server.sh 失败，请检查网络。" && exit 1
     bash install_server.sh
-    
+    [[ $? -ne 0 ]] && red "运行 install_server.sh 失败，请检查。" && exit 1
     rm -f install_server.sh
 }
 
@@ -615,7 +623,8 @@ menu() {
         4 ) changeconf ;;
         5 ) showconf ;;
         6 ) update_core ;;
-        * ) exit 1 ;;
+        0 ) exit 0 ;;
+        * ) red "无效的选项，退出脚本。" && exit 1 ;;
     esac
 }
 
