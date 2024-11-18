@@ -421,12 +421,21 @@ check_environment_grep() {
   install_software grep
 }
 
+check_environment_dig() {
+  if has_command dig; then
+    return
+  fi
+
+  install_software dig
+}
+
 check_environment() {
   check_environment_operating_system
   check_environment_architecture
   check_environment_systemd
   check_environment_curl
   check_environment_grep
+  check_environment_dig
 }
 
 vercmp_segment() {
