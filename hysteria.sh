@@ -321,7 +321,7 @@ quic:
 fastOpen: true
 
 socks5:
-  listen: 127.0.0.1:5080
+  listen: 127.0.0.1:7887  # 修改此处端口号为您想要的端口，例如7887
 
 transport:
   udp:
@@ -343,7 +343,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:5080"
+    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
   },
   "transport": {
     "udp": {
@@ -449,7 +449,7 @@ hysteriaswitch(){
 }
 
 changeport(){
-    oldport=$(cat /etc/hysteria/config.yaml 2>/dev/null | sed -n 1p | awk '{print $2}' | awk -F ":" '{print $2}')
+    oldport=$(grep '^listen:' /etc/hysteria/config.yaml | awk '{print $2}' | awk -F ":" '{print $2}')
 
     read -p "设置 Hysteria 2 端口[1-65535]（回车则随机分配端口）：" port
     [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
@@ -462,9 +462,20 @@ changeport(){
         fi
     done
 
-    sed -i "1s#$oldport#$port#g" /etc/hysteria/config.yaml
-    sed -i "1s#$oldport#$port#g" /root/hy/hy-client.yaml
-    sed -i "2s#$oldport#$port#g" /root/hy/hy-client.json
+    sed -i "s/^listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
+    sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
+    sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
+
+    # 更新 iptables 规则
+    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+
+    if [[ -n $firstport ]]; then
+        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+    fi
+
+    netfilter-persistent save >/dev/null 2>&1
 
     stophysteria && starthysteria
 
@@ -474,14 +485,14 @@ changeport(){
 }
 
 changepasswd(){
-    oldpasswd=$(cat /etc/hysteria/config.yaml 2>/dev/null | sed -n 15p | awk '{print $2}')
+    oldpasswd=$(grep '^password:' /etc/hysteria/config.yaml | awk '{print $2}')
 
     read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
     [[ -z $passwd ]] && passwd=$(date +%s%N | md5sum | cut -c 1-8)
 
-    sed -i "1s#$oldpasswd#$passwd#g" /etc/hysteria/config.yaml
-    sed -i "1s#$oldpasswd#$passwd#g" /root/hy/hy-client.yaml
-    sed -i "3s#$oldpasswd#$passwd#g" /root/hy/hy-client.json
+    sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
+    sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
+    sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -491,16 +502,16 @@ changepasswd(){
 }
 
 change_cert(){
-    old_cert=$(cat /etc/hysteria/config.yaml | grep cert | awk -F " " '{print $2}')
-    old_key=$(cat /etc/hysteria/config.yaml | grep key | awk -F " " '{print $2}')
-    old_hydomain=$(cat /root/hy/hy-client.yaml | grep sni | awk '{print $2}')
+    old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
     inst_cert
 
-    sed -i "s!$old_cert!$cert_path!g" /etc/hysteria/config.yaml
-    sed -i "s!$old_key!$key_path!g" /etc/hysteria/config.yaml
-    sed -i "6s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
-    sed -i "5s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
+    sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
+    sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -510,11 +521,11 @@ change_cert(){
 }
 
 changeproxysite(){
-    oldproxysite=$(cat /etc/hysteria/config.yaml | grep url | awk -F " " '{print $2}' | awk -F "https://" '{print $2}')
-    
+    oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
+
     inst_site
 
-    sed -i "s#$oldproxysite#$proxysite#g" /etc/caddy/Caddyfile
+    sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
 
     stophysteria && starthysteria
 
