@@ -52,6 +52,13 @@ realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
 }
 
+check_port_80(){
+    if ss -tuln | grep -q ':80 '; then
+        red "端口80已被占用，请确保端口80未被其他服务占用（如nginx、apache等）后再试。"
+        exit 1
+    fi
+}
+
 inst_cert(){
     green "Hysteria 2 协议证书申请方式如下："
     echo ""
@@ -64,11 +71,7 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        chmod -R 777 /root
-        
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
-
+        # 检查现有证书
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
             green "检测到原有域名：$domain 的证书，正在应用"
@@ -118,20 +121,35 @@ inst_cert(){
                     systemctl start cron
                     systemctl enable cron
                 fi
-                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
-                source ~/.bashrc
-                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
-                else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                # 安装 ACME 脚本
+                curl https://get.acme.sh | sh -s email=admin@yourdomain.com
+                # 使用 ACME 脚本的绝对路径
+                ACME_PATH="$HOME/.acme.sh/acme.sh"
+                if [[ ! -f "$ACME_PATH" ]]; then
+                    red "ACME 脚本安装失败，请手动安装并重试。"
+                    exit 1
                 fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                $ACME_PATH --upgrade --auto-upgrade
+                $ACME_PATH --set-default-ca --server letsencrypt
+                # 检查端口80是否可用
+                check_port_80
+                # 申请证书
+                if [[ -n $(echo $ip | grep ":") ]]; then
+                    $ACME_PATH --issue -d ${domain} --standalone -k ec-256 --listen-v6
+                else
+                    $ACME_PATH --issue -d ${domain} --standalone -k ec-256
+                fi
+                # 安装证书
+                $ACME_PATH --install-cert -d ${domain} \
+                    --key-file /root/private.key \
+                    --fullchain-file /root/cert.crt \
+                    --ecc
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
                     echo $domain > /root/ca.log
-                    sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
-                    echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
+                    # 移除之前添加的 cron 任务，避免重复
+                    sed -i '/acme.sh --cron/d' /etc/crontab >/dev/null 2>&1
+                    # 使用 ACME 脚本自带的自动续期
+                    $ACME_PATH --install-cronjob
                     green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
                     yellow "证书crt文件路径如下: /root/cert.crt"
                     yellow "私钥key文件路径如下: /root/private.key"
@@ -155,17 +173,23 @@ inst_cert(){
         yellow "证书域名：$domain"
         hy_domain=$domain
 
-        chmod +rw $cert_path
-        chmod +rw $key_path
+        # 检查证书和密钥文件是否存在
+        if [[ ! -f "$cert_path" || ! -f "$key_path" ]]; then
+            red "证书文件或密钥文件不存在，请检查路径是否正确。"
+            exit 1
+        fi
+
+        chmod 600 "$cert_path" "$key_path"
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
+        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 777 /etc/hysteria/cert.crt
-        chmod 777 /etc/hysteria/private.key
+        chmod 600 /etc/hysteria/cert.crt
+        chmod 600 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -302,7 +326,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir /root/hy
+    mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
