@@ -49,7 +49,8 @@ if [[ -z $(type -P curl) ]]; then
 fi
 
 realip(){
-    ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
+    ip4=$(curl -s4m8 ip.gs -k) || ip4=""
+    ip6=$(curl -s6m8 ip.gs -k) || ip6=""
 }
 
 inst_cert(){
@@ -65,7 +66,7 @@ inst_cert(){
         key_path="/root/private.key"
 
         chmod -R 777 /root
-        
+
         chmod +rw /root/cert.crt
         chmod +rw /root/private.key
 
@@ -89,12 +90,11 @@ inst_cert(){
             read -p "请输入需要申请证书的域名：" domain
             [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
             green "已输入的域名：$domain" && sleep 1
-            domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
-                domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
-            fi
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
-                red "未解析出 IP，请检查域名是否输入有误" 
+            domainAIP=$(dig @8.8.8.8 +time=2 +short "$domain" A 2>/dev/null)
+            domainAAAAIP=$(dig @2001:4860:4860::8888 +time=2 +short "$domain" AAAA 2>/dev/null)
+
+            if [[ -z $domainAIP && -z $domainAAAAIP ]]; then
+                red "未解析出 IP，请检查域名是否输入有误"
                 yellow "是否尝试强行匹配？"
                 green "1. 是，将使用强行匹配"
                 green "2. 否，退出脚本"
@@ -106,8 +106,21 @@ inst_cert(){
                     exit 1
                 fi
             fi
-            # 修改这里的IP比对逻辑，允许多个IP匹配
-            if echo "$domainIP" | grep -qw "$ip"; then
+
+            # 检查域名的A和AAAA记录是否包含服务器的IP
+            ip_match=false
+            if [[ -n $ip4 && -n $domainAIP ]]; then
+                if echo "$domainAIP" | grep -qw "$ip4"; then
+                    ip_match=true
+                fi
+            fi
+            if [[ -n $ip6 && -n $domainAAAAIP ]]; then
+                if echo "$domainAAAAIP" | grep -qw "$ip6"; then
+                    ip_match=true
+                fi
+            fi
+
+            if [[ $ip_match == true ]]; then
                 ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
                 if [[ $SYSTEM == "CentOS" ]]; then
                     ${PACKAGE_INSTALL[int]} cronie
@@ -122,7 +135,7 @@ inst_cert(){
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
+                if [[ -n $(echo $ip6 | grep ":") ]]; then
                     bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
                 else
                     bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
@@ -296,10 +309,10 @@ EOF
     fi
 
     # 给 IPv6 地址加中括号
-    if [[ -n $(echo $ip | grep ":") ]]; then
-        last_ip="[$ip]"
+    if [[ -n $(echo $ip6 | grep ":") ]]; then
+        last_ip="[$ip6]"
     else
-        last_ip=$ip
+        last_ip=$ip4
     fi
 
     mkdir /root/hy
