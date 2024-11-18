@@ -217,8 +217,12 @@ inst_jump(){
 }
 
 inst_pwd(){
-    read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" auth_pwd
-    [[ -z $auth_pwd ]] && auth_pwd=$(date +%s%N | md5sum | cut -c 1-8)
+    read -p "设置 Hysteria 2 密码（回车跳过为16位以上的随机字符）：" auth_pwd
+    if [[ -z $auth_pwd ]]; then
+        # 生成至少16位的随机字母数字密码
+        auth_pwd=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+        echo
+    fi
     yellow "使用在 Hysteria 2 节点的密码为：$auth_pwd"
 }
 
@@ -488,7 +492,11 @@ changepasswd(){
     oldpasswd=$(grep '^password:' /etc/hysteria/config.yaml | awk '{print $2}')
 
     read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
-    [[ -z $passwd ]] && passwd=$(date +%s%N | md5sum | cut -c 1-8)
+    if [[ -z $passwd ]]; then
+        # 生成至少16位的随机字母数字密码
+        passwd=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+        echo
+    fi
 
     sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
     sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
