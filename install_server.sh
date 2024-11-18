@@ -6,6 +6,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2023 Aperture Internet Laboratory
 #
+
 set -e
 
 
@@ -399,6 +400,7 @@ check_environment_systemd() {
       error "This script only supports Linux distributions with systemd."
       note "Specify FORCE_NO_SYSTEMD=1 to disable this check and force this script to run as if systemd exists."
       note "Specify FORCE_NO_SYSTEMD=2 to disable this check and skip all systemd related commands."
+      exit 95
       ;;
   esac
 }

@@ -65,7 +65,7 @@ inst_cert(){
         key_path="/root/private.key"
 
         chmod -R 777 /root
-
+        
         chmod +rw /root/cert.crt
         chmod +rw /root/private.key
 
@@ -207,8 +207,9 @@ inst_jump(){
                 fi
             done
         fi
-        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport  -j DNAT --to-destination :$port
-        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport  -j DNAT --to-destination :$port
+        # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
+        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
         netfilter-persistent save >/dev/null 2>&1
     else
         red "将继续使用单端口模式"
@@ -222,7 +223,7 @@ inst_pwd(){
 }
 
 inst_site(){
-    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车世嘉maimai日本网站]：" proxysite
+    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车maimai.sega.jp]：" proxysite
     [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
     yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
 }
