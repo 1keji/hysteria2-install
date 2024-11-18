@@ -6,7 +6,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2023 Aperture Internet Laboratory
 #
-
 set -e
 
 
@@ -289,7 +288,7 @@ is_user_exists() {
 
 rerun_with_sudo() {
   if ! has_command sudo; then
-    return 127
+    return 13
   fi
 
   local _target_script
@@ -299,9 +298,9 @@ rerun_with_sudo() {
     chmod +x "$_tmp_script"
 
     if has_command curl; then
-      curl -o "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh'
+      curl -o "$_tmp_script" 'https://get.hy2.sh/'
     elif has_command wget; then
-      wget -O "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh'
+      wget -O "$_tmp_script" 'https://get.hy2.sh'
     else
       return 127
     fi
@@ -400,7 +399,6 @@ check_environment_systemd() {
       error "This script only supports Linux distributions with systemd."
       note "Specify FORCE_NO_SYSTEMD=1 to disable this check and force this script to run as if systemd exists."
       note "Specify FORCE_NO_SYSTEMD=2 to disable this check and skip all systemd related commands."
-      exit 1
       ;;
   esac
 }
@@ -421,21 +419,12 @@ check_environment_grep() {
   install_software grep
 }
 
-check_environment_dig() {
-  if has_command dig; then
-    return
-  fi
-
-  install_software dig
-}
-
 check_environment() {
   check_environment_operating_system
   check_environment_architecture
   check_environment_systemd
   check_environment_curl
   check_environment_grep
-  check_environment_dig
 }
 
 vercmp_segment() {
@@ -544,14 +533,14 @@ check_hysteria_user() {
   fi
 
   if [[ ! -e "$SYSTEMD_SERVICES_DIR/hysteria-server.service" ]]; then
-    HYSTERIA_USER="hysteria"
+    HYSTERIA_USER="$_default_hysteria_user"
     return
   fi
 
   HYSTERIA_USER="$(grep -o '^User=\w*' "$SYSTEMD_SERVICES_DIR/hysteria-server.service" | tail -1 | cut -d '=' -f 2 || true)"
 
   if [[ -z "$HYSTERIA_USER" ]]; then
-    HYSTERIA_USER="hysteria"
+    HYSTERIA_USER="$_default_hysteria_user"
   fi
 }
 
@@ -808,7 +797,7 @@ get_installed_version() {
 get_latest_version() {
   if [[ -n "$VERSION" ]]; then
     echo "$VERSION"
-    return 0
+    return
   fi
 
   local _tmpfile=$(mktemp)
@@ -817,8 +806,9 @@ get_latest_version() {
     exit 11
   fi
 
-  # 使用 sed 提取 tag_name 的值
-  local _latest_version=$(grep '"tag_name":' "$_tmpfile" | head -1 | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
+  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"app/v.*"')
+  _latest_version=${_latest_version#'"app/'}
+  _latest_version=${_latest_version%'"'}
 
   if [[ -n "$_latest_version" ]]; then
     echo "$_latest_version"
@@ -831,7 +821,7 @@ download_hysteria() {
   local _version="$1"
   local _destination="$2"
 
-  local _download_url="$REPO_URL/releases/download/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
+  local _download_url="$REPO_URL/releases/download/app/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
   echo "Downloading hysteria binary: $_download_url ..."
   if ! curl -R -H 'Cache-Control: no-cache' "$_download_url" -o "$_destination"; then
     error "Download failed, please check your network and try again."
