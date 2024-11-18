@@ -51,6 +51,8 @@ fi
 realip(){
     ip4=$(curl -s4m8 ip.gs -k) || ip4=""
     ip6=$(curl -s6m8 ip.gs -k) || ip6=""
+    green "服务器的 IPv4 地址: ${ip4:-未检测到 IPv4 地址}"
+    green "服务器的 IPv6 地址: ${ip6:-未检测到 IPv6 地址}"
 }
 
 inst_cert(){
@@ -65,10 +67,10 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        chmod -R 777 /root
-
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        # 移除错误的权限修改
+        # chmod -R 777 /root
+        # chmod +rw /root/cert.crt
+        # chmod +rw /root/private.key
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
@@ -107,7 +109,7 @@ inst_cert(){
                 fi
             fi
 
-            # 检查域名的A和AAAA记录是否包含服务器的IP
+            # 检查域名的 A 和 AAAA 记录是否包含服务器的 IP
             ip_match=false
             if [[ -n $ip4 && -n $domainAIP ]]; then
                 if echo "$domainAIP" | grep -qw "$ip4"; then
@@ -135,20 +137,27 @@ inst_cert(){
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip6 | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
+                if [[ -n "$ip6" ]]; then
+                    bash ~/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --listen-v6 --insecure
                 else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --insecure
                 fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                bash ~/.acme.sh/acme.sh --install-cert -d "${domain}" --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
-                    echo $domain > /root/ca.log
+                    echo "$domain" > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
                     echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
                     green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
                     yellow "证书crt文件路径如下: /root/cert.crt"
                     yellow "私钥key文件路径如下: /root/private.key"
-                    hy_domain=$domain
+                    hy_domain="$domain"
+
+                    # 修改权限在文件存在后执行
+                    chmod +rw /root/cert.crt
+                    chmod +rw /root/private.key
+                else
+                    red "证书申请失败，请检查 acme.sh 的日志以获取更多信息。"
+                    exit 1
                 fi
             else
                 red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
@@ -166,19 +175,20 @@ inst_cert(){
         yellow "密钥文件 key 的路径：$key_path "
         read -p "请输入证书的域名：" domain
         yellow "证书域名：$domain"
-        hy_domain=$domain
+        hy_domain="$domain"
 
-        chmod +rw $cert_path
-        chmod +rw $key_path
+        chmod +rw "$cert_path"
+        chmod +rw "$key_path"
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
+        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 777 /etc/hysteria/cert.crt
-        chmod 777 /etc/hysteria/private.key
+        chmod +rw /etc/hysteria/cert.crt
+        chmod +rw /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -221,8 +231,8 @@ inst_jump(){
             done
         fi
         # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
-        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+        ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
         netfilter-persistent save >/dev/null 2>&1
     else
         red "将继续使用单端口模式"
@@ -248,8 +258,8 @@ insthysteria(){
         wg-quick down wgcf >/dev/null 2>&1
         systemctl stop warp-go >/dev/null 2>&1
         realip
-        systemctl start warp-go >/dev/null 2>&1
         wg-quick up wgcf >/dev/null 2>&1
+        systemctl start warp-go >/dev/null 2>&1
     else
         realip
     fi
@@ -302,20 +312,20 @@ masquerade:
 EOF
 
     # 确定最终入站端口范围
-    if [[ -n $firstport ]]; then
+    if [[ -n $firstport && -n $endport ]]; then
         last_port="$port,$firstport-$endport"
     else
         last_port=$port
     fi
 
     # 给 IPv6 地址加中括号
-    if [[ -n $(echo $ip6 | grep ":") ]]; then
+    if [[ -n "$ip6" ]]; then
         last_ip="[$ip6]"
     else
         last_ip=$ip4
     fi
 
-    mkdir /root/hy
+    mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -399,9 +409,9 @@ rules:
   - MATCH,Proxy
 EOF
     url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $url > /root/hy/url.txt
+    echo "$url" > /root/hy/url.txt
     nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $nohopurl > /root/hy/url-nohop.txt
+    echo "$nohopurl" > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
     systemctl enable hysteria-server
@@ -452,7 +462,7 @@ hysteriaswitch(){
     echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
     echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
     echo ""
-    read -rp "请输入选项 [0-3]: " switchInput
+    read -rp "请输入选项 [1-3]: " switchInput
     case $switchInput in
         1 ) starthysteria ;;
         2 ) stophysteria ;;
@@ -480,12 +490,14 @@ changeport(){
     sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
     # 更新 iptables 规则
-    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
-    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    if [[ -n $firstport && -n $endport ]]; then
+        iptables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
+        ip6tables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
+    fi
 
-    if [[ -n $firstport ]]; then
-        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+    if [[ -n $firstport && -n $endport ]]; then
+        iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+        ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
     fi
 
     netfilter-persistent save >/dev/null 2>&1
