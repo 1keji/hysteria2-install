@@ -612,7 +612,7 @@ parse_arguments() {
         fi
         ;;
       '-c' | '--check')
-        if [[ -n "$OPERATION" && "$OPERATION" != 'check_update' ]]; then
+        if [[ -n "$OPERATION" && "$OPERATION" != 'check' ]]; then
           show_argument_error_and_exit "Option '-c' or '--check' is in conflict with other options."
         fi
         OPERATION='check_update'
@@ -628,7 +628,7 @@ parse_arguments() {
         if [[ -z "$LOCAL_FILE" ]]; then
           show_argument_error_and_exit "Please specify the local binary to install for option '-l' or '--local'."
         fi
-        shift
+        break
         ;;
       *)
         show_argument_error_and_exit "Unknown option '$1'"
@@ -808,8 +808,8 @@ get_latest_version() {
     exit 11
   fi
 
-  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"v[0-9.]*"')
-  _latest_version=${_latest_version#'"'}
+  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"app/v.*"')
+  _latest_version=${_latest_version#'"app/'}
   _latest_version=${_latest_version%'"'}
 
   if [[ -n "$_latest_version" ]]; then
@@ -823,7 +823,7 @@ download_hysteria() {
   local _version="$1"
   local _destination="$2"
 
-  local _download_url="$REPO_URL/releases/download/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
+  local _download_url="$REPO_URL/releases/download/app/$_version/hysteria-$OPERATING_SYSTEM-$ARCHITECTURE"
   echo "Downloading hysteria binary: $_download_url ..."
   if ! curl -R -H 'Cache-Control: no-cache' "$_download_url" -o "$_destination"; then
     error "Download failed, please check your network and try again."
