@@ -64,10 +64,12 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        chmod -R 777 /root
-        
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        # 移除对 /root 目录的 777 权限设置
+        # chmod -R 777 /root
+
+        # 确保证书文件存在时才修改权限
+        [[ -f /root/cert.crt ]] && chmod +rw /root/cert.crt
+        [[ -f /root/private.key ]] && chmod +rw /root/private.key
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
@@ -86,7 +88,7 @@ inst_cert(){
                 realip
             fi
 
-            read -p "请输入需要申请证书的域名：" domain
+            read -rp "请输入需要申请证书的域名：" domain
             [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
             green "已输入的域名：$domain" && sleep 1
             domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
@@ -118,14 +120,23 @@ inst_cert(){
                     systemctl start cron
                     systemctl enable cron
                 fi
-                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
+
+                # 提示用户输入有效的电子邮件地址
+                read -rp "请输入用于 ACME 的有效电子邮件地址：" acme_email
+                [[ -z $acme_email ]] && red "未输入电子邮件地址，无法执行操作！" && exit 1
+                green "使用的电子邮件地址：$acme_email"
+
+                curl https://get.acme.sh | sh -s email=$acme_email
+                # 确保 acme.sh 的路径被正确添加
+                export PATH="$HOME/.acme.sh:$PATH"
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+
                 if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6
                 else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256
                 fi
                 bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
@@ -136,6 +147,9 @@ inst_cert(){
                     yellow "证书crt文件路径如下: /root/cert.crt"
                     yellow "私钥key文件路径如下: /root/private.key"
                     hy_domain=$domain
+                else
+                    red "证书申请失败，请检查 acme.sh 日志并重试"
+                    exit 1
                 fi
             else
                 red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
@@ -164,8 +178,8 @@ inst_cert(){
         key_path="/etc/hysteria/private.key"
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 777 /etc/hysteria/cert.crt
-        chmod 777 /etc/hysteria/private.key
+        chmod 600 /etc/hysteria/cert.crt
+        chmod 600 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -385,9 +399,9 @@ rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    url="hysteria2://$auth_pwd@$last_ip:$last_port/?sni=$hy_domain#1keji-Hysteria2"
     echo $url > /root/hy/url.txt
-    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?sni=$hy_domain#1keji-Hysteria2"
     echo $nohopurl > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
