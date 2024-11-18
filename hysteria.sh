@@ -41,6 +41,7 @@ done
 
 [[ -z $SYSTEM ]] && red "目前暂不支持你的VPS的操作系统！" && exit 1
 
+# 检查是否安装 curl，如果未安装则安装
 if [[ -z $(type -P curl) ]]; then
     if [[ ! $SYSTEM == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
@@ -48,6 +49,7 @@ if [[ -z $(type -P curl) ]]; then
     ${PACKAGE_INSTALL[int]} curl
 fi
 
+# 获取服务器的 IPv4 和 IPv6 地址
 realip(){
     ip4=$(curl -s4m8 ip.gs -k) || ip4=""
     ip6=$(curl -s6m8 ip.gs -k) || ip6=""
@@ -67,15 +69,10 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        # 移除错误的权限修改
-        # chmod -R 777 /root
-        # chmod +rw /root/cert.crt
-        # chmod +rw /root/private.key
-
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
             green "检测到原有域名：$domain 的证书，正在应用"
-            hy_domain=$domain
+            hy_domain="$domain"
         else
             WARPv4Status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
             WARPv6Status=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
@@ -103,22 +100,39 @@ inst_cert(){
                 read -p "请输入选项 [1-2]：" ipChoice
                 if [[ $ipChoice == 1 ]]; then
                     yellow "将尝试强行匹配以申请域名证书"
+                    ip_match=true  # 设置为 true 以允许继续
                 else
                     red "将退出脚本"
                     exit 1
                 fi
-            fi
-
-            # 检查域名的 A 和 AAAA 记录是否包含服务器的 IP
-            ip_match=false
-            if [[ -n $ip4 && -n $domainAIP ]]; then
-                if echo "$domainAIP" | grep -qw "$ip4"; then
-                    ip_match=true
+            else
+                # 检查域名的 A 和 AAAA 记录是否包含服务器的 IP
+                ip_match=false
+                if [[ -n $ip4 && -n $domainAIP ]]; then
+                    if echo "$domainAIP" | grep -qw "$ip4"; then
+                        ip_match=true
+                    fi
                 fi
-            fi
-            if [[ -n $ip6 && -n $domainAAAAIP ]]; then
-                if echo "$domainAAAAIP" | grep -qw "$ip6"; then
-                    ip_match=true
+                if [[ -n $ip6 && -n $domainAAAAIP ]]; then
+                    if echo "$domainAAAAIP" | grep -qw "$ip6"; then
+                        ip_match=true
+                    fi
+                fi
+
+                if [[ $ip_match == true ]]; then
+                    :
+                else
+                    yellow "是否尝试强行匹配？"
+                    green "1. 是，将使用强行匹配"
+                    green "2. 否，退出脚本"
+                    read -p "请输入选项 [1-2]：" ipChoice
+                    if [[ $ipChoice == 1 ]]; then
+                        yellow "将尝试强行匹配以申请域名证书"
+                        ip_match=true  # 设置为 true 以允许继续
+                    else
+                        red "将退出脚本"
+                        exit 1
+                    fi
                 fi
             fi
 
@@ -167,127 +181,126 @@ inst_cert(){
                 yellow "3. 脚本可能跟不上时代, 建议截图发布到GitHub Issues、GitLab Issues、论坛或TG群询问"
                 exit 1
             fi
+        elif [[ $certInput == 3 ]]; then
+            read -p "请输入公钥文件 crt 的路径：" cert_path
+            yellow "公钥文件 crt 的路径：$cert_path "
+            read -p "请输入密钥文件 key 的路径：" key_path
+            yellow "密钥文件 key 的路径：$key_path "
+            read -p "请输入证书的域名：" domain
+            yellow "证书域名：$domain"
+            hy_domain="$domain"
+
+            chmod +rw "$cert_path"
+            chmod +rw "$key_path"
+        else
+            green "将使用必应自签证书作为 Hysteria 2 的节点证书"
+
+            cert_path="/etc/hysteria/cert.crt"
+            key_path="/etc/hysteria/private.key"
+            mkdir -p /etc/hysteria
+            openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
+            openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
+            chmod +rw /etc/hysteria/cert.crt
+            chmod +rw /etc/hysteria/private.key
+            hy_domain="www.bing.com"
+            domain="www.bing.com"
         fi
-    elif [[ $certInput == 3 ]]; then
-        read -p "请输入公钥文件 crt 的路径：" cert_path
-        yellow "公钥文件 crt 的路径：$cert_path "
-        read -p "请输入密钥文件 key 的路径：" key_path
-        yellow "密钥文件 key 的路径：$key_path "
-        read -p "请输入证书的域名：" domain
-        yellow "证书域名：$domain"
-        hy_domain="$domain"
+    }
 
-        chmod +rw "$cert_path"
-        chmod +rw "$key_path"
-    else
-        green "将使用必应自签证书作为 Hysteria 2 的节点证书"
+    inst_port(){
+        iptables -t nat -F PREROUTING >/dev/null 2>&1
 
-        cert_path="/etc/hysteria/cert.crt"
-        key_path="/etc/hysteria/private.key"
-        mkdir -p /etc/hysteria
-        openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
-        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod +rw /etc/hysteria/cert.crt
-        chmod +rw /etc/hysteria/private.key
-        hy_domain="www.bing.com"
-        domain="www.bing.com"
-    fi
-}
+        read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
+        [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
+        until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
+            if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
+                echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
+                read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
+                [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
+            fi
+        done
 
-inst_port(){
-    iptables -t nat -F PREROUTING >/dev/null 2>&1
+        yellow "将在 Hysteria 2 节点使用的端口是：$port"
+        inst_jump
+    }
 
-    read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
-    [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
-    until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
-        if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
-            echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
-            read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
-            [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
+    inst_jump(){
+        green "Hysteria 2 端口使用模式如下："
+        echo ""
+        echo -e " ${GREEN}1.${PLAIN} 单端口 ${YELLOW}（默认）${PLAIN}"
+        echo -e " ${GREEN}2.${PLAIN} 端口跳跃"
+        echo ""
+        read -rp "请输入选项 [1-2]: " jumpInput
+        if [[ $jumpInput == 2 ]]; then
+            read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
+            read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
+            if [[ $firstport -ge $endport ]]; then
+                until [[ $firstport -le $endport ]]; do
+                    if [[ $firstport -ge $endport ]]; then
+                        red "你设置的起始端口小于末尾端口，请重新输入起始和末尾端口"
+                        read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
+                        read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
+                    fi
+                done
+            fi
+            # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
+            iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+            ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+            netfilter-persistent save >/dev/null 2>&1
+        else
+            red "将继续使用单端口模式"
         fi
-    done
+    }
 
-    yellow "将在 Hysteria 2 节点使用的端口是：$port"
-    inst_jump
-}
+    inst_pwd(){
+        read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" auth_pwd
+        [[ -z $auth_pwd ]] && auth_pwd=$(date +%s%N | md5sum | cut -c 1-8)
+        yellow "使用在 Hysteria 2 节点的密码为：$auth_pwd"
+    }
 
-inst_jump(){
-    green "Hysteria 2 端口使用模式如下："
-    echo ""
-    echo -e " ${GREEN}1.${PLAIN} 单端口 ${YELLOW}（默认）${PLAIN}"
-    echo -e " ${GREEN}2.${PLAIN} 端口跳跃"
-    echo ""
-    read -rp "请输入选项 [1-2]: " jumpInput
-    if [[ $jumpInput == 2 ]]; then
-        read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
-        read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
-        if [[ $firstport -ge $endport ]]; then
-            until [[ $firstport -le $endport ]]; do
-                if [[ $firstport -ge $endport ]]; then
-                    red "你设置的起始端口小于末尾端口，请重新输入起始和末尾端口"
-                    read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
-                    read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
-                fi
-            done
+    inst_site(){
+        read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车maimai.sega.jp]：" proxysite
+        [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
+        yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
+    }
+
+    insthysteria(){
+        warpv6=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+        warpv4=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+        if [[ $warpv4 =~ on|plus || $warpv6 =~ on|plus ]]; then
+            wg-quick down wgcf >/dev/null 2>&1
+            systemctl stop warp-go >/dev/null 2>&1
+            realip
+            wg-quick up wgcf >/dev/null 2>&1
+            systemctl start warp-go >/dev/null 2>&1
+        else
+            realip
         fi
-        # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
-        iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
-        ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
-        netfilter-persistent save >/dev/null 2>&1
-    else
-        red "将继续使用单端口模式"
-    fi
-}
 
-inst_pwd(){
-    read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" auth_pwd
-    [[ -z $auth_pwd ]] && auth_pwd=$(date +%s%N | md5sum | cut -c 1-8)
-    yellow "使用在 Hysteria 2 节点的密码为：$auth_pwd"
-}
+        if [[ ! ${SYSTEM} == "CentOS" ]]; then
+            ${PACKAGE_UPDATE[int]}
+        fi
+        ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
-inst_site(){
-    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车maimai.sega.jp]：" proxysite
-    [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
-    yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
-}
+        wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+        bash install_server.sh
+        rm -f install_server.sh
 
-insthysteria(){
-    warpv6=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-    warpv4=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-    if [[ $warpv4 =~ on|plus || $warpv6 =~ on|plus ]]; then
-        wg-quick down wgcf >/dev/null 2>&1
-        systemctl stop warp-go >/dev/null 2>&1
-        realip
-        wg-quick up wgcf >/dev/null 2>&1
-        systemctl start warp-go >/dev/null 2>&1
-    else
-        realip
-    fi
+        if [[ -f "/usr/local/bin/hysteria" ]]; then
+            green "Hysteria 2 安装成功！"
+        else
+            red "Hysteria 2 安装失败！"
+            exit 1
+        fi
 
-    if [[ ! ${SYSTEM} == "CentOS" ]]; then
-        ${PACKAGE_UPDATE[int]}
-    fi
-    ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
+        # 询问用户 Hysteria 配置
+        inst_cert
+        inst_port
+        inst_pwd
+        inst_site
 
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
-    bash install_server.sh
-    rm -f install_server.sh
-
-    if [[ -f "/usr/local/bin/hysteria" ]]; then
-        green "Hysteria 2 安装成功！"
-    else
-        red "Hysteria 2 安装失败！"
-        exit 1
-    fi
-
-    # 询问用户 Hysteria 配置
-    inst_cert
-    inst_port
-    inst_pwd
-    inst_site
-
-    # 设置 Hysteria 配置文件
-    cat << EOF > /etc/hysteria/config.yaml
+        # 设置 Hysteria 配置文件
+        cat << EOF > /etc/hysteria/config.yaml
 listen: :$port
 
 tls:
@@ -311,22 +324,22 @@ masquerade:
     rewriteHost: true
 EOF
 
-    # 确定最终入站端口范围
-    if [[ -n $firstport && -n $endport ]]; then
-        last_port="$port,$firstport-$endport"
-    else
-        last_port=$port
-    fi
+        # 确定最终入站端口范围
+        if [[ -n $firstport && -n $endport ]]; then
+            last_port="$port,$firstport-$endport"
+        else
+            last_port=$port
+        fi
 
-    # 给 IPv6 地址加中括号
-    if [[ -n "$ip6" ]]; then
-        last_ip="[$ip6]"
-    else
-        last_ip=$ip4
-    fi
+        # 给 IPv6 地址加中括号
+        if [[ -n "$ip6" ]]; then
+            last_ip="[$ip6]"
+        else
+            last_ip=$ip4
+        fi
 
-    mkdir -p /root/hy
-    cat << EOF > /root/hy/hy-client.yaml
+        mkdir -p /root/hy
+        cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
 auth: $auth_pwd
@@ -350,7 +363,7 @@ transport:
   udp:
     hopInterval: 30s 
 EOF
-    cat << EOF > /root/hy/hy-client.json
+        cat << EOF > /root/hy/hy-client.json
 {
   "server": "$last_ip:$last_port",
   "auth": "$auth_pwd",
@@ -375,7 +388,7 @@ EOF
   }
 }
 EOF
-    cat <<EOF > /root/hy/clash-meta.yaml
+        cat <<EOF > /root/hy/clash-meta.yaml
 mixed-port: 7890
 external-controller: 127.0.0.1:9090
 allow-lan: false
@@ -408,221 +421,221 @@ rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo "$url" > /root/hy/url.txt
-    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo "$nohopurl" > /root/hy/url-nohop.txt
+        url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+        echo "$url" > /root/hy/url.txt
+        nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+        echo "$nohopurl" > /root/hy/url-nohop.txt
 
-    systemctl daemon-reload
-    systemctl enable hysteria-server
-    systemctl start hysteria-server
-    if [[ -n $(systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
-        green "Hysteria 2 服务启动成功"
-    else
-        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出" && exit 1
-    fi
-    red "======================================================================================"
-    green "Hysteria 2 代理服务安装完成"
-    yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
-    red "$(cat /root/hy/hy-client.yaml)"
-    yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
-    red "$(cat /root/hy/hy-client.json)"
-    yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
-    yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
-    red "$(cat /root/hy/url.txt)"
-    yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
-    red "$(cat /root/hy/url-nohop.txt)"
-}
-
-unsthysteria(){
-    systemctl stop hysteria-server.service >/dev/null 2>&1
-    systemctl disable hysteria-server.service >/dev/null 2>&1
-    rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
-    rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
-    iptables -t nat -F PREROUTING >/dev/null 2>&1
-    netfilter-persistent save >/dev/null 2>&1
-
-    green "Hysteria 2 已彻底卸载完成！"
-}
-
-starthysteria(){
-    systemctl start hysteria-server
-    systemctl enable hysteria-server >/dev/null 2>&1
-}
-
-stophysteria(){
-    systemctl stop hysteria-server
-    systemctl disable hysteria-server >/dev/null 2>&1
-}
-
-hysteriaswitch(){
-    yellow "请选择你需要的操作："
-    echo ""
-    echo -e " ${GREEN}1.${PLAIN} 启动 Hysteria 2"
-    echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
-    echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
-    echo ""
-    read -rp "请输入选项 [1-3]: " switchInput
-    case $switchInput in
-        1 ) starthysteria ;;
-        2 ) stophysteria ;;
-        3 ) stophysteria && starthysteria ;;
-        * ) exit 1 ;;
-    esac
-}
-
-changeport(){
-    oldport=$(grep '^listen:' /etc/hysteria/config.yaml | awk '{print $2}' | awk -F ":" '{print $2}')
-
-    read -p "设置 Hysteria 2 端口[1-65535]（回车则随机分配端口）：" port
-    [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
-
-    until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
-        if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
-            echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
-            read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
-            [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
+        systemctl daemon-reload
+        systemctl enable hysteria-server
+        systemctl start hysteria-server
+        if [[ -n $(systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
+            green "Hysteria 2 服务启动成功"
+        else
+            red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出" && exit 1
         fi
-    done
+        red "======================================================================================"
+        green "Hysteria 2 代理服务安装完成"
+        yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
+        red "$(cat /root/hy/hy-client.yaml)"
+        yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
+        red "$(cat /root/hy/hy-client.json)"
+        yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
+        yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
+        red "$(cat /root/hy/url.txt)"
+        yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
+        red "$(cat /root/hy/url-nohop.txt)"
+    }
 
-    sed -i "s/^listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
-    sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
-    sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
+    unsthysteria(){
+        systemctl stop hysteria-server.service >/dev/null 2>&1
+        systemctl disable hysteria-server.service >/dev/null 2>&1
+        rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
+        rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
+        iptables -t nat -F PREROUTING >/dev/null 2>&1
+        netfilter-persistent save >/dev/null 2>&1
 
-    # 更新 iptables 规则
-    if [[ -n $firstport && -n $endport ]]; then
-        iptables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
-        ip6tables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
-    fi
+        green "Hysteria 2 已彻底卸载完成！"
+    }
 
-    if [[ -n $firstport && -n $endport ]]; then
-        iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
-        ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
-    fi
+    starthysteria(){
+        systemctl start hysteria-server
+        systemctl enable hysteria-server >/dev/null 2>&1
+    }
 
-    netfilter-persistent save >/dev/null 2>&1
+    stophysteria(){
+        systemctl stop hysteria-server
+        systemctl disable hysteria-server >/dev/null 2>&1
+    }
 
-    stophysteria && starthysteria
+    hysteriaswitch(){
+        yellow "请选择你需要的操作："
+        echo ""
+        echo -e " ${GREEN}1.${PLAIN} 启动 Hysteria 2"
+        echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
+        echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
+        echo ""
+        read -rp "请输入选项 [1-3]: " switchInput
+        case $switchInput in
+            1 ) starthysteria ;;
+            2 ) stophysteria ;;
+            3 ) stophysteria && starthysteria ;;
+            * ) exit 1 ;;
+        esac
+    }
 
-    green "Hysteria 2 端口已成功修改为：$port"
-    yellow "请手动更新客户端配置文件以使用节点"
-    showconf
-}
+    changeport(){
+        oldport=$(grep '^listen:' /etc/hysteria/config.yaml | awk '{print $2}' | awk -F ":" '{print $2}')
 
-changepasswd(){
-    oldpasswd=$(grep '^password:' /etc/hysteria/config.yaml | awk '{print $2}')
+        read -p "设置 Hysteria 2 端口[1-65535]（回车则随机分配端口）：" port
+        [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
 
-    read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
-    [[ -z $passwd ]] && passwd=$(date +%s%N | md5sum | cut -c 1-8)
+        until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
+            if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
+                echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
+                read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
+                [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
+            fi
+        done
 
-    sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
-    sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
-    sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
+        sed -i "s/^listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
+        sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
+        sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
-    stophysteria && starthysteria
+        # 更新 iptables 规则
+        if [[ -n $firstport && -n $endport ]]; then
+            iptables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
+            ip6tables -t nat -D PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$oldport" >/dev/null 2>&1
+        fi
 
-    green "Hysteria 2 节点密码已成功修改为：$passwd"
-    yellow "请手动更新客户端配置文件以使用节点"
-    showconf
-}
+        if [[ -n $firstport && -n $endport ]]; then
+            iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+            ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+        fi
 
-change_cert(){
-    old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
-    old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
-    old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
+        netfilter-persistent save >/dev/null 2>&1
 
-    inst_cert
+        stophysteria && starthysteria
 
-    sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
-    sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
-    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
-    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
+        green "Hysteria 2 端口已成功修改为：$port"
+        yellow "请手动更新客户端配置文件以使用节点"
+        showconf
+    }
 
-    stophysteria && starthysteria
+    changepasswd(){
+        oldpasswd=$(grep '^password:' /etc/hysteria/config.yaml | awk '{print $2}')
 
-    green "Hysteria 2 节点证书类型已成功修改"
-    yellow "请手动更新客户端配置文件以使用节点"
-    showconf
-}
+        read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
+        [[ -z $passwd ]] && passwd=$(date +%s%N | md5sum | cut -c 1-8)
 
-changeproxysite(){
-    oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
+        sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
+        sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
+        sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
 
-    inst_site
+        stophysteria && starthysteria
 
-    sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
+        green "Hysteria 2 节点密码已成功修改为：$passwd"
+        yellow "请手动更新客户端配置文件以使用节点"
+        showconf
+    }
 
-    stophysteria && starthysteria
+    change_cert(){
+        old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
+        old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
+        old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
-    green "Hysteria 2 节点伪装网站已成功修改为：$proxysite"
-}
+        inst_cert
 
-changeconf(){
-    green "Hysteria 2 配置变更选择如下:"
-    echo -e " ${GREEN}1.${PLAIN} 修改端口"
-    echo -e " ${GREEN}2.${PLAIN} 修改密码"
-    echo -e " ${GREEN}3.${PLAIN} 修改证书类型"
-    echo -e " ${GREEN}4.${PLAIN} 修改伪装网站"
-    echo ""
-    read -p " 请选择操作 [1-4]：" confAnswer
-    case $confAnswer in
-        1 ) changeport ;;
-        2 ) changepasswd ;;
-        3 ) change_cert ;;
-        4 ) changeproxysite ;;
-        * ) exit 1 ;;
-    esac
-}
+        sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
+        sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
+        sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
+        sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
 
-showconf(){
-    yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
-    red "$(cat /root/hy/hy-client.yaml)"
-    yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
-    red "$(cat /root/hy/hy-client.json)"
-    yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
-    yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
-    red "$(cat /root/hy/url.txt)"
-    yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
-    red "$(cat /root/hy/url-nohop.txt)"
-}
+        stophysteria && starthysteria
 
-update_core(){
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
-    bash install_server.sh
-    
-    rm -f install_server.sh
-}
+        green "Hysteria 2 节点证书类型已成功修改"
+        yellow "请手动更新客户端配置文件以使用节点"
+        showconf
+    }
 
-menu() {
-    clear
-    echo "#############################################################"
-    echo -e "#                  ${RED}Hysteria 2 一键安装脚本${PLAIN}                   #"
-    echo -e "# ${GREEN}作者${PLAIN}: 1keji                                             #"
-    echo -e "# ${GREEN}博客${PLAIN}: https://1keji.net                                 #"
-    echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji/hysteria2-install #"
-    echo "##############################################################"
-    echo ""
-    echo -e " ${GREEN}1.${PLAIN} 安装 Hysteria 2"
-    echo -e " ${GREEN}2.${PLAIN} ${RED}卸载 Hysteria 2${PLAIN}"
-    echo " -------------"
-    echo -e " ${GREEN}3.${PLAIN} 关闭、开启、重启 Hysteria 2"
-    echo -e " ${GREEN}4.${PLAIN} 修改 Hysteria 2 配置"
-    echo -e " ${GREEN}5.${PLAIN} 显示 Hysteria 2 配置文件"
-    echo " -------------"
-    echo -e " ${GREEN}6.${PLAIN} 更新 Hysteria 2 内核"
-    echo " -------------"
-    echo -e " ${GREEN}0.${PLAIN} 退出脚本"
-    echo ""
-    read -rp "请输入选项 [0-6]: " menuInput
-    case $menuInput in
-        1 ) insthysteria ;;
-        2 ) unsthysteria ;;
-        3 ) hysteriaswitch ;;
-        4 ) changeconf ;;
-        5 ) showconf ;;
-        6 ) update_core ;;
-        * ) exit 1 ;;
-    esac
-}
+    changeproxysite(){
+        oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
 
-menu
+        inst_site
+
+        sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
+
+        stophysteria && starthysteria
+
+        green "Hysteria 2 节点伪装网站已成功修改为：$proxysite"
+    }
+
+    changeconf(){
+        green "Hysteria 2 配置变更选择如下:"
+        echo -e " ${GREEN}1.${PLAIN} 修改端口"
+        echo -e " ${GREEN}2.${PLAIN} 修改密码"
+        echo -e " ${GREEN}3.${PLAIN} 修改证书类型"
+        echo -e " ${GREEN}4.${PLAIN} 修改伪装网站"
+        echo ""
+        read -p " 请选择操作 [1-4]：" confAnswer
+        case $confAnswer in
+            1 ) changeport ;;
+            2 ) changepasswd ;;
+            3 ) change_cert ;;
+            4 ) changeproxysite ;;
+            * ) exit 1 ;;
+        esac
+    }
+
+    showconf(){
+        yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
+        red "$(cat /root/hy/hy-client.yaml)"
+        yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
+        red "$(cat /root/hy/hy-client.json)"
+        yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
+        yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
+        red "$(cat /root/hy/url.txt)"
+        yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
+        red "$(cat /root/hy/url-nohop.txt)"
+    }
+
+    update_core(){
+        wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+        bash install_server.sh
+        
+        rm -f install_server.sh
+    }
+
+    menu() {
+        clear
+        echo "#############################################################"
+        echo -e "#                  ${RED}Hysteria 2 一键安装脚本${PLAIN}                   #"
+        echo -e "# ${GREEN}作者${PLAIN}: 1keji                                             #"
+        echo -e "# ${GREEN}博客${PLAIN}: https://1keji.net                                 #"
+        echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji/hysteria2-install #"
+        echo "##############################################################"
+        echo ""
+        echo -e " ${GREEN}1.${PLAIN} 安装 Hysteria 2"
+        echo -e " ${GREEN}2.${PLAIN} ${RED}卸载 Hysteria 2${PLAIN}"
+        echo " -------------"
+        echo -e " ${GREEN}3.${PLAIN} 关闭、开启、重启 Hysteria 2"
+        echo -e " ${GREEN}4.${PLAIN} 修改 Hysteria 2 配置"
+        echo -e " ${GREEN}5.${PLAIN} 显示 Hysteria 2 配置文件"
+        echo " -------------"
+        echo -e " ${GREEN}6.${PLAIN} 更新 Hysteria 2 内核"
+        echo " -------------"
+        echo -e " ${GREEN}0.${PLAIN} 退出脚本"
+        echo ""
+        read -rp "请输入选项 [0-6]: " menuInput
+        case $menuInput in
+            1 ) insthysteria ;;
+            2 ) unsthysteria ;;
+            3 ) hysteriaswitch ;;
+            4 ) changeconf ;;
+            5 ) showconf ;;
+            6 ) update_core ;;
+            * ) exit 1 ;;
+        esac
+    }
+
+    menu
