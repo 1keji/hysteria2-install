@@ -145,31 +145,30 @@ inst_cert(){
                 yellow "3. 脚本可能跟不上时代, 建议截图发布到GitHub Issues、GitLab Issues、论坛或TG群询问"
                 exit 1
             fi
+        elif [[ $certInput == 3 ]]; then
+            read -p "请输入公钥文件 crt 的路径：" cert_path
+            yellow "公钥文件 crt 的路径：$cert_path "
+            read -p "请输入密钥文件 key 的路径：" key_path
+            yellow "密钥文件 key 的路径：$key_path "
+            read -p "请输入证书的域名：" domain
+            yellow "证书域名：$domain"
+            hy_domain=$domain
+
+            chmod +rw $cert_path
+            chmod +rw $key_path
+        else
+            green "将使用必应自签证书作为 Hysteria 2 的节点证书"
+
+            cert_path="/etc/hysteria/cert.crt"
+            key_path="/etc/hysteria/private.key"
+            openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
+            openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
+            chmod 700 /etc/hysteria/cert.crt
+            chmod 700 /etc/hysteria/private.key
+            hy_domain="www.bing.com"
+            domain="www.bing.com"
         fi
-    elif [[ $certInput == 3 ]]; then
-        read -p "请输入公钥文件 crt 的路径：" cert_path
-        yellow "公钥文件 crt 的路径：$cert_path "
-        read -p "请输入密钥文件 key 的路径：" key_path
-        yellow "密钥文件 key 的路径：$key_path "
-        read -p "请输入证书的域名：" domain
-        yellow "证书域名：$domain"
-        hy_domain=$domain
-
-        chmod +rw $cert_path
-        chmod +rw $key_path
-    else
-        green "将使用必应自签证书作为 Hysteria 2 的节点证书"
-
-        cert_path="/etc/hysteria/cert.crt"
-        key_path="/etc/hysteria/private.key"
-        openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
-        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 700 /etc/hysteria/cert.crt
-        chmod 700 /etc/hysteria/private.key
-        hy_domain="www.bing.com"
-        domain="www.bing.com"
-    fi
-}
+    }
 
 inst_port(){
     iptables -t nat -F PREROUTING >/dev/null 2>&1
@@ -246,7 +245,7 @@ insthysteria(){
     ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
     # 下载并执行安装脚本
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/refs/heads/main/install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh
     bash install_server.sh
     rm -f install_server.sh
 
@@ -380,7 +379,7 @@ proxy-groups:
     type: select
     proxies:
       - 1keji-Hysteria2
-      
+          
 rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
@@ -552,7 +551,7 @@ showconf(){
 }
 
 update_core(){
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/refs/heads/main/install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh
     bash install_server.sh
     
     rm -f install_server.sh

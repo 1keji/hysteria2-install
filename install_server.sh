@@ -299,9 +299,9 @@ rerun_with_sudo() {
     chmod +x "$_tmp_script"
 
     if has_command curl; then
-      curl -o "$_tmp_script" 'https://get.1keji.sh/'
+      curl -o "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh'
     elif has_command wget; then
-      wget -O "$_tmp_script" 'https://get.1keji.sh'
+      wget -O "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh'
     else
       return 127
     fi
@@ -808,12 +808,14 @@ get_latest_version() {
     exit 11
   fi
 
-  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"v[.0-9]*"')
-  _latest_version=${_latest_version#'"'}
-  _latest_version=${_latest_version%'"'}
+  # 使用更宽松的正则表达式匹配 tag_name
+  local _latest_version=$(grep '"tag_name":' "$_tmpfile" | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
 
   if [[ -n "$_latest_version" ]]; then
     echo "$_latest_version"
+  else
+    error "无法解析最新版本号，请检查 GitHub 仓库的 Releases 是否正确。"
+    exit 11
   fi
 
   rm -f "$_tmpfile"
