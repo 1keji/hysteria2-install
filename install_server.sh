@@ -289,7 +289,7 @@ is_user_exists() {
 
 rerun_with_sudo() {
   if ! has_command sudo; then
-    return 13
+    return 127
   fi
 
   local _target_script
@@ -299,9 +299,9 @@ rerun_with_sudo() {
     chmod +x "$_tmp_script"
 
     if has_command curl; then
-      curl -o "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh'
+      curl -o "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh'
     elif has_command wget; then
-      wget -O "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh'
+      wget -O "$_tmp_script" 'https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh'
     else
       return 127
     fi
@@ -400,7 +400,6 @@ check_environment_systemd() {
       error "This script only supports Linux distributions with systemd."
       note "Specify FORCE_NO_SYSTEMD=1 to disable this check and force this script to run as if systemd exists."
       note "Specify FORCE_NO_SYSTEMD=2 to disable this check and skip all systemd related commands."
-      exit 1
       ;;
   esac
 }
@@ -535,14 +534,14 @@ check_hysteria_user() {
   fi
 
   if [[ ! -e "$SYSTEMD_SERVICES_DIR/hysteria-server.service" ]]; then
-    HYSTERIA_USER="hysteria"
+    HYSTERIA_USER="$_default_hysteria_user"
     return
   fi
 
   HYSTERIA_USER="$(grep -o '^User=\w*' "$SYSTEMD_SERVICES_DIR/hysteria-server.service" | tail -1 | cut -d '=' -f 2 || true)"
 
   if [[ -z "$HYSTERIA_USER" ]]; then
-    HYSTERIA_USER="hysteria"
+    HYSTERIA_USER="$_default_hysteria_user"
   fi
 }
 
@@ -612,7 +611,7 @@ parse_arguments() {
         fi
         ;;
       '-c' | '--check')
-        if [[ -n "$OPERATION" && "$OPERATION" != 'check_update' ]]; then
+        if [[ -n "$OPERATION" && "$OPERATION" != 'check' ]]; then
           show_argument_error_and_exit "Option '-c' or '--check' is in conflict with other options."
         fi
         OPERATION='check_update'
@@ -628,7 +627,7 @@ parse_arguments() {
         if [[ -z "$LOCAL_FILE" ]]; then
           show_argument_error_and_exit "Please specify the local binary to install for option '-l' or '--local'."
         fi
-        shift
+        break
         ;;
       *)
         show_argument_error_and_exit "Unknown option '$1'"
@@ -799,7 +798,7 @@ get_installed_version() {
 get_latest_version() {
   if [[ -n "$VERSION" ]]; then
     echo "$VERSION"
-    return
+    return 0
   fi
 
   local _tmpfile=$(mktemp)
@@ -808,14 +807,12 @@ get_latest_version() {
     exit 11
   fi
 
-  # 使用更宽松的正则表达式匹配 tag_name
-  local _latest_version=$(grep '"tag_name":' "$_tmpfile" | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"v[0-9.]*"')
+  _latest_version=${_latest_version#'"'}
+  _latest_version=${_latest_version%'"'}
 
   if [[ -n "$_latest_version" ]]; then
     echo "$_latest_version"
-  else
-    error "无法解析最新版本号，请检查 GitHub 仓库的 Releases 是否正确。"
-    exit 11
   fi
 
   rm -f "$_tmpfile"

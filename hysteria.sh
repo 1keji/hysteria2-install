@@ -49,8 +49,8 @@ if [[ -z $(type -P curl) ]]; then
 fi
 
 realip(){
-    # 使用多个服务检测真实IP，提高准确性
-    ip=$(curl -s4m8 https://ifconfig.me/ip) || ip=$(curl -s6m8 https://ifconfig.me/ip) || ip=$(curl -s4m8 https://ipinfo.io/ip) || ip=$(curl -s6m8 https://ipinfo.io/ip)
+    # 尝试通过多个服务获取公共IP地址，提高可靠性
+    ip=$(curl -s4m8 https://ipinfo.io/ip) || ip=$(curl -s6m8 https://ipinfo.io/ip) || ip=$(curl -s4m8 https://api.ipify.org) || ip=$(curl -s6m8 https://api.ipify.org)
 }
 
 inst_cert(){
@@ -66,9 +66,6 @@ inst_cert(){
         key_path="/root/private.key"
 
         chmod -R 700 /root
-
-        chmod +rw /root/cert.crt 2>/dev/null || touch /root/cert.crt
-        chmod +rw /root/private.key 2>/dev/null || touch /root/private.key
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
@@ -90,15 +87,15 @@ inst_cert(){
             read -p "请输入需要申请证书的域名：" domain
             [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
             green "已输入的域名：$domain" && sleep 1
-            domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
-                domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
+            domainIP=$(dig @8.8.8.8 +short "$domain" 2>/dev/null)
+            if [[ -z $domainIP ]]; then
+                domainIP=$(dig @2001:4860:4860::8888 +short "$domain" 2>/dev/null)
             fi
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
+            if [[ -z $domainIP ]]; then
                 red "未解析出 IP，请检查域名是否输入有误" 
                 yellow "是否尝试强行匹配？"
-                echo -e " ${GREEN}1.${PLAIN} 是，将使用强行匹配"
-                echo -e " ${GREEN}2.${PLAIN} 否，退出脚本"
+                echo -e " ${GREEN}1. 是，将使用强行匹配"
+                echo -e " ${GREEN}2. 否，退出脚本"
                 read -p "请输入选项 [1-2]：" ipChoice
                 if [[ $ipChoice == 1 ]]; then
                     yellow "将尝试强行匹配以申请域名证书"
@@ -108,26 +105,26 @@ inst_cert(){
                 fi
             fi
             if [[ $domainIP == $ip ]]; then
-                # 检查端口80是否可用
-                if ss -tuln | grep -q ":80 "; then
-                    red "端口80已被占用，请确保端口80可用以进行ACME验证。"
-                    exit 1
-                fi
-
                 ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
-
-                # 安装并配置acme.sh
+                if [[ $SYSTEM == "CentOS" ]]; then
+                    ${PACKAGE_INSTALL[int]} cronie
+                    systemctl start crond
+                    systemctl enable crond
+                else
+                    ${PACKAGE_INSTALL[int]} cron
+                    systemctl start cron
+                    systemctl enable cron
+                fi
                 curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-
-                # 申请证书
-                bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
-
-                # 安装证书
+                if [[ -n $(echo $ip | grep ":") ]]; then
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
+                else
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                fi
                 bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
-
                 if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
                     echo $domain > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
@@ -145,30 +142,31 @@ inst_cert(){
                 yellow "3. 脚本可能跟不上时代, 建议截图发布到GitHub Issues、GitLab Issues、论坛或TG群询问"
                 exit 1
             fi
-        elif [[ $certInput == 3 ]]; then
-            read -p "请输入公钥文件 crt 的路径：" cert_path
-            yellow "公钥文件 crt 的路径：$cert_path "
-            read -p "请输入密钥文件 key 的路径：" key_path
-            yellow "密钥文件 key 的路径：$key_path "
-            read -p "请输入证书的域名：" domain
-            yellow "证书域名：$domain"
-            hy_domain=$domain
-
-            chmod +rw $cert_path
-            chmod +rw $key_path
-        else
-            green "将使用必应自签证书作为 Hysteria 2 的节点证书"
-
-            cert_path="/etc/hysteria/cert.crt"
-            key_path="/etc/hysteria/private.key"
-            openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
-            openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-            chmod 700 /etc/hysteria/cert.crt
-            chmod 700 /etc/hysteria/private.key
-            hy_domain="www.bing.com"
-            domain="www.bing.com"
         fi
-    }
+    elif [[ $certInput == 3 ]]; then
+        read -p "请输入公钥文件 crt 的路径：" cert_path
+        yellow "公钥文件 crt 的路径：$cert_path "
+        read -p "请输入密钥文件 key 的路径：" key_path
+        yellow "密钥文件 key 的路径：$key_path "
+        read -p "请输入证书的域名：" domain
+        yellow "证书域名：$domain"
+        hy_domain=$domain
+
+        chmod +rw $cert_path
+        chmod +rw $key_path
+    else
+        green "将使用必应自签证书作为 Hysteria 2 的节点证书"
+
+        cert_path="/etc/hysteria/cert.crt"
+        key_path="/etc/hysteria/private.key"
+        openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
+        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
+        chmod 700 /etc/hysteria/cert.crt
+        chmod 700 /etc/hysteria/private.key
+        hy_domain="www.bing.com"
+        domain="www.bing.com"
+    fi
+}
 
 inst_port(){
     iptables -t nat -F PREROUTING >/dev/null 2>&1
@@ -221,7 +219,7 @@ inst_pwd(){
 }
 
 inst_site(){
-    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车默认maimai.sega.jp]：" proxysite
+    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车使用maimai日本网站]：" proxysite
     [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
     yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
 }
@@ -244,8 +242,8 @@ insthysteria(){
     fi
     ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
-    # 下载并执行安装脚本
-    wget -N https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh
+    # 更新下载链接到1keji的GitHub仓库
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
     rm -f install_server.sh
 
@@ -301,7 +299,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir -p /root/hy
+    mkdir /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -379,7 +377,7 @@ proxy-groups:
     type: select
     proxies:
       - 1keji-Hysteria2
-          
+      
 rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
@@ -461,10 +459,9 @@ changeport(){
         fi
     done
 
-    sed -i "s#listen: :$oldport#listen: :$port#g" /etc/hysteria/config.yaml
-    sed -i "s#server: $ip:$oldport#server: $ip:$port#g" /root/hy/hy-client.yaml
-    sed -i "s#\"server\": \"$ip:$oldport\"#\"server\": \"$ip:$port\"#g" /root/hy/hy-client.json
-    sed -i "s#name: 1keji-Hysteria2#name: 1keji-Hysteria2#g" /root/hy/clash-meta.yaml
+    sed -i "s/listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
+    sed -i "s/server: $ip:$oldport/server: $ip:$port/g" /root/hy/hy-client.yaml
+    sed -i "s/\"server\": \"$ip:$oldport\"/\"server\": \"$ip:$port\"/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -479,9 +476,9 @@ changepasswd(){
     read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
     [[ -z $passwd ]] && passwd=$(date +%s%N | md5sum | cut -c 1-8)
 
-    sed -i "s#password: $oldpasswd#password: $passwd#g" /etc/hysteria/config.yaml
-    sed -i "s#auth: $oldpasswd#auth: $passwd#g" /root/hy/hy-client.yaml
-    sed -i "s#\"auth\": \"$oldpasswd\"#\"auth\": \"$passwd\"#g" /root/hy/hy-client.json
+    sed -i "s/password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
+    sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
+    sed -i "s/\"auth\": \"$oldpasswd\"/\"auth\": \"$passwd\"/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -491,16 +488,16 @@ changepasswd(){
 }
 
 change_cert(){
-    old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
-    old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
-    old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
+    old_cert=$(grep '^  cert:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_key=$(grep '^  key:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_hydomain=$(grep '^  sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
     inst_cert
 
-    sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
-    sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
-    sed -i "s#$old_hydomain#$hy_domain#g" /root/hy/hy-client.yaml
-    sed -i "s#$old_hydomain#$hy_domain#g" /root/hy/hy-client.json
+    sed -i "s!$old_cert!$cert_path!g" /etc/hysteria/config.yaml
+    sed -i "s!$old_key!$key_path!g" /etc/hysteria/config.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -510,8 +507,8 @@ change_cert(){
 }
 
 changeproxysite(){
-    oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F " " '{print $2}' | awk -F "https://" '{print $2}')
-    
+    oldproxysite=$(grep '^    url:' /etc/hysteria/config.yaml | awk '{print $2}' | awk -F "https://" '{print $2}')
+
     inst_site
 
     sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
@@ -551,9 +548,10 @@ showconf(){
 }
 
 update_core(){
-    wget -N https://raw.githubusercontent.com/1keji/hysteria-install/main/hy2/install_server.sh
+    # 更新下载链接到1keji的GitHub仓库
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
-    
+
     rm -f install_server.sh
 }
 
@@ -561,9 +559,13 @@ menu() {
     clear
     echo "#############################################################"
     echo -e "#                  ${RED}Hysteria 2 一键安装脚本${PLAIN}                  #"
-    echo -e "# ${GREEN}作者${PLAIN}: 1keji                                       #"
-    echo -e "# ${GREEN}博客${PLAIN}: https://1keji.net                      #"
-    echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji               #"
+    echo -e "# ${GREEN}作者${PLAIN}: 1keji                                           #"
+    echo -e "# ${GREEN}博客${PLAIN}: https://1keji.com                              #"
+    echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji/hysteria2-install  #"
+    echo -e "# ${GREEN}GitLab 项目${PLAIN}: https://gitlab.com/1keji/hysteria2-install  #"
+    echo -e "# ${GREEN}Telegram 频道${PLAIN}: https://t.me/1keji_channel              #"
+    echo -e "# ${GREEN}Telegram 群组${PLAIN}: https://t.me/1keji_group                 #"
+    echo -e "# ${GREEN}YouTube 频道${PLAIN}: https://www.youtube.com/@1keji          #"
     echo "#############################################################"
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 安装 Hysteria 2"
