@@ -78,8 +78,8 @@ inst_cert(){
                 wg-quick down wgcf >/dev/null 2>&1
                 systemctl stop warp-go >/dev/null 2>&1
                 realip
-                wg-quick up wgcf >/dev/null 2>&1
                 systemctl start warp-go >/dev/null 2>&1
+                wg-quick up wgcf >/dev/null 2>&1
             else
                 realip
             fi

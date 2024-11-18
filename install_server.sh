@@ -534,14 +534,14 @@ check_hysteria_user() {
   fi
 
   if [[ ! -e "$SYSTEMD_SERVICES_DIR/hysteria-server.service" ]]; then
-    HYSTERIA_USER="$_default_hysteria_user"
+    HYSTERIA_USER="hysteria"
     return
   fi
 
   HYSTERIA_USER="$(grep -o '^User=\w*' "$SYSTEMD_SERVICES_DIR/hysteria-server.service" | tail -1 | cut -d '=' -f 2 || true)"
 
   if [[ -z "$HYSTERIA_USER" ]]; then
-    HYSTERIA_USER="$_default_hysteria_user"
+    HYSTERIA_USER="hysteria"
   fi
 }
 
@@ -807,9 +807,8 @@ get_latest_version() {
     exit 11
   fi
 
-  local _latest_version=$(grep 'tag_name' "$_tmpfile" | head -1 | grep -o '"v[0-9.]*"')
-  _latest_version=${_latest_version#'"'}
-  _latest_version=${_latest_version%'"'}
+  # 使用 sed 提取 tag_name 的值
+  local _latest_version=$(grep '"tag_name":' "$_tmpfile" | head -1 | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
 
   if [[ -n "$_latest_version" ]]; then
     echo "$_latest_version"
