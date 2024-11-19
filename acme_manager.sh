@@ -52,23 +52,36 @@ install_dependencies() {
     case "$PM" in
         apt)
             apt update
-            apt install -y curl socat
+            apt install -y curl socat cron
             ;;
         yum)
             yum install -y epel-release
-            yum install -y curl socat
+            yum install -y curl socat cronie
             ;;
         pacman)
-            pacman -Sy --noconfirm curl socat
+            pacman -Sy --noconfirm curl socat cronie
             ;;
         brew)
             brew install curl socat
+            # macOS 默认已安装 cron，通常不需要额外安装
             ;;
         *)
             echo -e "${RED}不支持的操作系统或包管理器: $OS${NC}"
             exit 1
             ;;
     esac
+
+    # 启动并启用 cron 服务
+    if [[ "$PM" == "apt" || "$PM" == "yum" || "$PM" == "pacman" ]]; then
+        systemctl enable cron || systemctl enable crond
+        systemctl start cron || systemctl start crond
+        if systemctl is-active --quiet cron || systemctl is-active --quiet crond; then
+            echo -e "${GREEN}cron 服务已启动并启用.${NC}"
+        else
+            echo -e "${RED}无法启动 cron 服务.${NC}"
+            exit 1
+        fi
+    fi
 }
 
 # 安装 acme.sh
@@ -92,6 +105,11 @@ install_acme() {
             exit 1
         fi
         echo -e "${GREEN}acme.sh 安装成功. 路径: $ACME_SH${NC}"
+
+        # 确保 acme.sh 添加到 PATH
+        export PATH="$PATH:$HOME/.acme.sh"
+        echo 'export PATH="$PATH:$HOME/.acme.sh"' >> ~/.bashrc
+        source ~/.bashrc
     fi
 }
 
