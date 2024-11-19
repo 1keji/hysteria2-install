@@ -41,30 +41,12 @@ done
 
 [[ -z $SYSTEM ]] && red "目前暂不支持你的VPS的操作系统！" && exit 1
 
-# Function to install packages with system-specific package manager
-install_packages(){
-    local packages=("$@")
-    if [[ -z $(type -P curl) ]]; then
-        if [[ ! $SYSTEM == "CentOS" ]]; then
-            ${PACKAGE_UPDATE[int]}
-        fi
-        ${PACKAGE_INSTALL[int]} curl
+if [[ -z $(type -P curl) ]]; then
+    if [[ ! $SYSTEM == "CentOS" ]]; then
+        ${PACKAGE_UPDATE[int]}
     fi
-
-    if [[ -z $(type -P dig) ]]; then
-        if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
-            ${PACKAGE_INSTALL[int]} dnsutils
-        elif [[ $SYSTEM == "CentOS" || $SYSTEM == "Fedora" ]]; then
-            ${PACKAGE_INSTALL[int]} bind-utils
-        else
-            red "无法自动安装 dig 工具，请手动安装并重试！"
-            exit 1
-        fi
-    fi
-
-    # Install other necessary packages
-    ${PACKAGE_INSTALL[int]} "${packages[@]}"
-}
+    ${PACKAGE_INSTALL[int]} curl
+fi
 
 realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
@@ -79,19 +61,16 @@ inst_cert(){
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
-        cert_path="/etc/hysteria/cert.crt"
-        key_path="/etc/hysteria/private.key"
+        cert_path="/root/cert.crt"
+        key_path="/root/private.key"
 
-        # 创建 /etc/hysteria/ 目录
-        mkdir -p /etc/hysteria
+        chmod -R 777 /root
+        
+        chmod +rw /root/cert.crt
+        chmod +rw /root/private.key
 
-        # Ensure certificate and key have correct permissions
-        chmod -R 700 /etc/hysteria
-        chmod 600 /etc/hysteria/cert.crt 2>/dev/null || touch /etc/hysteria/cert.crt
-        chmod 600 /etc/hysteria/private.key 2>/dev/null || touch /etc/hysteria/private.key
-
-        if [[ -f /etc/hysteria/cert.crt && -f /etc/hysteria/private.key ]] && [[ -s /etc/hysteria/cert.crt && -s /etc/hysteria/private.key ]] && [[ -f /etc/hysteria/ca.log ]]; then
-            domain=$(cat /etc/hysteria/ca.log)
+        if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
+            domain=$(cat /root/ca.log)
             green "检测到原有域名：$domain 的证书，正在应用"
             hy_domain=$domain
         else
@@ -117,8 +96,8 @@ inst_cert(){
             if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
                 red "未解析出 IP，请检查域名是否输入有误" 
                 yellow "是否尝试强行匹配？"
-                echo -e " ${GREEN}1.${PLAIN} 是，将使用强行匹配"
-                echo -e " ${GREEN}2.${PLAIN} 否，退出脚本"
+                green "1. 是，将使用强行匹配"
+                green "2. 否，退出脚本"
                 read -p "请输入选项 [1-2]：" ipChoice
                 if [[ $ipChoice == 1 ]]; then
                     yellow "将尝试强行匹配以申请域名证书"
@@ -129,8 +108,7 @@ inst_cert(){
             fi
             # 修改这里的IP比对逻辑，允许多个IP匹配
             if echo "$domainIP" | grep -qw "$ip"; then
-                install_packages wget sudo socat openssl cron netfilter-persistent
-
+                ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
                 if [[ $SYSTEM == "CentOS" ]]; then
                     ${PACKAGE_INSTALL[int]} cronie
                     systemctl start crond
@@ -140,13 +118,7 @@ inst_cert(){
                     systemctl start cron
                     systemctl enable cron
                 fi
-
-                # Install acme.sh
                 curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
-                if [[ $? -ne 0 ]]; then
-                    red "acme.sh 安装失败，请检查网络或手动安装 acme.sh。"
-                    exit 1
-                fi
                 source ~/.bashrc
                 bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
                 bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
@@ -155,14 +127,14 @@ inst_cert(){
                 else
                     bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
                 fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /etc/hysteria/private.key --fullchain-file /etc/hysteria/cert.crt --ecc
-                if [[ -f /etc/hysteria/cert.crt && -f /etc/hysteria/private.key ]] && [[ -s /etc/hysteria/cert.crt && -s /etc/hysteria/private.key ]]; then
-                    echo $domain > /etc/hysteria/ca.log
+                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
+                    echo $domain > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
                     echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
-                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /etc/hysteria/ 目录下"
-                    yellow "证书crt文件路径如下: /etc/hysteria/cert.crt"
-                    yellow "私钥key文件路径如下: /etc/hysteria/private.key"
+                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
+                    yellow "证书crt文件路径如下: /root/cert.crt"
+                    yellow "私钥key文件路径如下: /root/private.key"
                     hy_domain=$domain
                 fi
             else
@@ -183,30 +155,24 @@ inst_cert(){
         yellow "证书域名：$domain"
         hy_domain=$domain
 
-        # 复制证书和密钥到 /etc/hysteria/ 目录
-        sudo cp "$cert_path" /etc/hysteria/cert.crt
-        sudo cp "$key_path" /etc/hysteria/private.key
-
-        # 设置正确的权限
-        sudo chown hysteria:hysteria /etc/hysteria/cert.crt /etc/hysteria/private.key
-        sudo chmod 600 /etc/hysteria/cert.crt /etc/hysteria/private.key
+        chmod +rw $cert_path
+        chmod +rw $key_path
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
-        mkdir -p /etc/hysteria
-        sudo openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
-        sudo openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        sudo chmod 600 /etc/hysteria/cert.crt
-        sudo chmod 600 /etc/hysteria/private.key
+        openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
+        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
+        chmod 777 /etc/hysteria/cert.crt
+        chmod 777 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
 }
 
 inst_port(){
-    sudo iptables -t nat -F PREROUTING >/dev/null 2>&1
+    iptables -t nat -F PREROUTING >/dev/null 2>&1
 
     read -p "设置 Hysteria 2 端口 [1-65535]（回车则随机分配端口）：" port
     [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
@@ -235,16 +201,16 @@ inst_jump(){
         if [[ $firstport -ge $endport ]]; then
             until [[ $firstport -le $endport ]]; do
                 if [[ $firstport -ge $endport ]]; then
-                    red "你设置的起始端口必须小于末尾端口，请重新输入起始和末尾端口"
+                    red "你设置的起始端口小于末尾端口，请重新输入起始和末尾端口"
                     read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
                     read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
                 fi
             done
         fi
         # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
-        sudo iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        sudo ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        sudo netfilter-persistent save >/dev/null 2>&1
+        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        netfilter-persistent save >/dev/null 2>&1
     else
         red "将继续使用单端口模式"
     fi
@@ -282,7 +248,7 @@ insthysteria(){
     if [[ ! ${SYSTEM} == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
     fi
-    install_packages wget sudo qrencode procps iptables-persistent netfilter-persistent
+    ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
@@ -302,7 +268,7 @@ insthysteria(){
     inst_site
 
     # 设置 Hysteria 配置文件
-    sudo tee /etc/hysteria/config.yaml > /dev/null << EOF
+    cat << EOF > /etc/hysteria/config.yaml
 listen: :$port
 
 tls:
@@ -340,8 +306,8 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir -p /root/hy
-    sudo tee /root/hy/hy-client.yaml > /dev/null << EOF
+    mkdir /root/hy
+    cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
 auth: $auth_pwd
@@ -365,7 +331,7 @@ transport:
   udp:
     hopInterval: 30s 
 EOF
-    sudo tee /root/hy/hy-client.json > /dev/null << EOF
+    cat << EOF > /root/hy/hy-client.json
 {
   "server": "$last_ip:$last_port",
   "auth": "$auth_pwd",
@@ -390,7 +356,7 @@ EOF
   }
 }
 EOF
-    sudo tee /root/hy/clash-meta.yaml > /dev/null <<EOF
+    cat <<EOF > /root/hy/clash-meta.yaml
 mixed-port: 7890
 external-controller: 127.0.0.1:9090
 allow-lan: false
@@ -424,62 +390,50 @@ rules:
   - MATCH,Proxy
 EOF
     url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $url | sudo tee /root/hy/url.txt
+    echo $url > /root/hy/url.txt
     nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $nohopurl | sudo tee /root/hy/url-nohop.txt
+    echo $nohopurl > /root/hy/url-nohop.txt
 
-    # 输出配置文件内容以供检查
-    echo "================= /etc/hysteria/config.yaml 内容如下 ================="
-    sudo cat /etc/hysteria/config.yaml
-    echo "======================================================================="
-
-    # 启动 Hysteria 服务并记录日志
-    sudo systemctl daemon-reload
-    sudo systemctl enable hysteria-server
-    sudo systemctl start hysteria-server
-
-    # 检查服务状态
-    if [[ -n $(sudo systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
+    systemctl daemon-reload
+    systemctl enable hysteria-server
+    systemctl start hysteria-server
+    if [[ -n $(systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
         green "Hysteria 2 服务启动成功"
     else
-        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出"
-        # 记录详细日志
-        sudo systemctl status hysteria-server -l > /root/hysteria_server_status.log
-        red "详细日志已保存到 /root/hysteria_server_status.log"
-        exit 1
+        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出" && exit 1
     fi
     red "======================================================================================"
     green "Hysteria 2 代理服务安装完成"
     yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
-    red "$(sudo cat /root/hy/hy-client.yaml)"
+    red "$(cat /root/hy/hy-client.yaml)"
     yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
-    red "$(sudo cat /root/hy/hy-client.json)"
+    red "$(cat /root/hy/hy-client.json)"
     yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
     yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
-    red "$(sudo cat /root/hy/url.txt)"
+    red "$(cat /root/hy/url.txt)"
     yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
-    red "$(sudo cat /root/hy/url-nohop.txt)"
+    red "$(cat /root/hy/url-nohop.txt)"
 }
 
 unsthysteria(){
-    sudo systemctl stop hysteria-server.service >/dev/null 2>&1
-    sudo systemctl disable hysteria-server.service >/dev/null 2>&1
-    sudo rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
-    sudo rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy hysteria.sh
-    sudo iptables -t nat -F PREROUTING >/dev/null 2>&1
-    sudo netfilter-persistent save >/dev/null 2>&1
+    systemctl stop hysteria-server.service >/dev/null 2>&1
+    systemctl disable hysteria-server.service >/dev/null 2>&1
+    rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
+    rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
+    iptables -t nat -F PREROUTING >/dev/null 2>&1
+    netfilter-persistent save >/dev/null 2>&1
 
     green "Hysteria 2 已彻底卸载完成！"
 }
 
 starthysteria(){
-    sudo systemctl start hysteria-server
-    sudo systemctl enable hysteria-server >/dev/null 2>&1
+    systemctl start hysteria-server
+    systemctl enable hysteria-server >/dev/null 2>&1
 }
 
 stophysteria(){
-    sudo systemctl stop hysteria-server
-    sudo systemctl disable hysteria-server >/dev/null 2>&1
+    systemctl stop hysteria-server
+    systemctl disable hysteria-server >/dev/null 2>&1
 }
 
 hysteriaswitch(){
@@ -512,22 +466,20 @@ changeport(){
         fi
     done
 
-    sudo sed -i "s/^listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
-    sudo sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
-    sudo sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
+    sed -i "s/^listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
+    sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
+    sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
     # 更新 iptables 规则
-    if grep -q "$oldport" /etc/hysteria/config.yaml; then
-        sudo iptables -t nat -D PREROUTING -p udp --dport $oldport -j REDIRECT --to-ports $port >/dev/null 2>&1
-        sudo ip6tables -t nat -D PREROUTING -p udp --dport $oldport -j REDIRECT --to-ports $port >/dev/null 2>&1
-    fi
+    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
 
     if [[ -n $firstport ]]; then
-        sudo iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        sudo ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
     fi
 
-    sudo netfilter-persistent save >/dev/null 2>&1
+    netfilter-persistent save >/dev/null 2>&1
 
     stophysteria && starthysteria
 
@@ -546,9 +498,9 @@ changepasswd(){
         echo
     fi
 
-    sudo sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
-    sudo sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
-    sudo sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
+    sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
+    sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
+    sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -564,10 +516,10 @@ change_cert(){
 
     inst_cert
 
-    sudo sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
-    sudo sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
-    sudo sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
-    sudo sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
+    sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
+    sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
 
     stophysteria && starthysteria
 
@@ -581,7 +533,7 @@ changeproxysite(){
 
     inst_site
 
-    sudo sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
+    sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
 
     stophysteria && starthysteria
 
@@ -607,20 +559,20 @@ changeconf(){
 
 showconf(){
     yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
-    red "$(sudo cat /root/hy/hy-client.yaml)"
+    red "$(cat /root/hy/hy-client.yaml)"
     yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
-    red "$(sudo cat /root/hy/hy-client.json)"
+    red "$(cat /root/hy/hy-client.json)"
     yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
     yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
-    red "$(sudo cat /root/hy/url.txt)"
+    red "$(cat /root/hy/url.txt)"
     yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
-    red "$(sudo cat /root/hy/url-nohop.txt)"
+    red "$(cat /root/hy/url-nohop.txt)"
 }
 
 update_core(){
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
-
+    
     rm -f install_server.sh
 }
 
