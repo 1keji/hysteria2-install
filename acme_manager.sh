@@ -132,7 +132,7 @@ get_acme_path() {
 # 注册账户（如果尚未注册）
 register_account() {
     get_acme_path
-    ACCOUNT_REGISTERED=$($ACME_SH --account-list | grep "Account Register Email" | wc -l)
+    ACCOUNT_REGISTERED=$($ACME_SH --accountlist | grep "Account Register Email" | wc -l)
     if [ "$ACCOUNT_REGISTERED" -eq 0 ]; then
         echo -e "${GREEN}请注册 acme.sh 账户以使用 ZeroSSL 或 Let's Encrypt CA.${NC}"
         while true; do
@@ -144,7 +144,7 @@ register_account() {
             fi
         done
         echo -e "${GREEN}正在注册账户...${NC}"
-        $ACME_SH --register-account -m "$USER_EMAIL"
+        $ACME_SH --register-account -m "$USER_EMAIL" --server zerossl
         if [ $? -ne 0 ]; then
             echo -e "${RED}账户注册失败.${NC}"
             exit 1
@@ -167,16 +167,34 @@ apply_certificate() {
         1)
             echo -e "${GREEN}使用 DNS 验证...${NC}"
             echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
+            # 使用 DNS 手动验证，需要用户手动添加 DNS TXT 记录
             $ACME_SH --issue --dns -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
-            # 确保 webroot 目录存在
-            WEBROOT="/var/www/html"
-            if [ ! -d "$WEBROOT" ]; then
-                echo -e "${RED}指定的 webroot 目录不存在: $WEBROOT${NC}"
-                exit 1
-            fi
+            while true; do
+                read -p "请输入 webroot 目录 (例如: /var/www/html): " WEBROOT
+                if [ -d "$WEBROOT" ]; then
+                    break
+                else
+                    echo -e "${RED}指定的 webroot 目录不存在: $WEBROOT${NC}"
+                    read -p "是否创建该目录? (y/n): " CREATE_DIR
+                    case "$CREATE_DIR" in
+                        y|Y)
+                            mkdir -p "$WEBROOT"
+                            if [ $? -eq 0 ]; then
+                                echo -e "${GREEN}目录创建成功: $WEBROOT${NC}"
+                            else
+                                echo -e "${RED}无法创建目录: $WEBROOT${NC}"
+                                exit 1
+                            fi
+                            ;;
+                        *)
+                            echo -e "${RED}请提供一个有效的 webroot 目录路径.${NC}"
+                            ;;
+                    esac
+                fi
+            done
             $ACME_SH --issue -d "$DOMAIN" --webroot "$WEBROOT" --debug 2
             ;;
         *)
