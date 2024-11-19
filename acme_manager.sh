@@ -129,9 +129,33 @@ get_acme_path() {
     fi
 }
 
+# 注册账户（如果尚未注册）
+register_account() {
+    get_acme_path
+    ACCOUNT_REGISTERED=$($ACME_SH --account-list | grep "Account Register Email" | wc -l)
+    if [ "$ACCOUNT_REGISTERED" -eq 0 ]; then
+        echo -e "${GREEN}请注册 acme.sh 账户以使用 ZeroSSL 或 Let's Encrypt CA.${NC}"
+        read -p "请输入您的电子邮件地址 (用于注册 acme.sh 账户): " USER_EMAIL
+        if [[ ! "$USER_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            echo -e "${RED}无效的电子邮件地址.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}正在注册账户...${NC}"
+        $ACME_SH --register-account -m "$USER_EMAIL"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}账户注册失败.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}账户注册成功.${NC}"
+    else
+        echo -e "${GREEN}账户已经注册.${NC}"
+    fi
+}
+
 # 申请证书
 apply_certificate() {
     get_acme_path
+    register_account
     echo -e "${GREEN}请输入你的域名 (例如: example.com):${NC}"
     read DOMAIN
     echo -e "${GREEN}请选择验证方式: (1) DNS 验证 (2) HTTP 验证${NC}"
@@ -139,11 +163,18 @@ apply_certificate() {
     case "$METHOD" in
         1)
             echo -e "${GREEN}使用 DNS 验证...${NC}"
-            $ACME_SH --issue --dns -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-please-dont-ask
+            echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
+            $ACME_SH --issue --dns --yes-I-know-dns-manual-mode-enough-please-dont-ask -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
-            $ACME_SH --issue -d "$DOMAIN" --webroot /var/www/html
+            # 确保 webroot 目录存在
+            WEBROOT="/var/www/html"
+            if [ ! -d "$WEBROOT" ]; then
+                echo -e "${RED}指定的 webroot 目录不存在: $WEBROOT${NC}"
+                exit 1
+            fi
+            $ACME_SH --issue -d "$DOMAIN" --webroot "$WEBROOT" --debug 2
             ;;
         *)
             echo -e "${RED}无效的选择.${NC}"
