@@ -22,10 +22,10 @@ yellow(){
 # 判断系统及定义系统安装依赖方式
 REGEX=("debian" "ubuntu" "centos|red hat|kernel|oracle linux|alma|rocky" "'amazon linux'" "fedora")
 RELEASE=("Debian" "Ubuntu" "CentOS" "CentOS" "Fedora")
-PACKAGE_UPDATE=("apt-get update" "apt-get update" "yum -y update" "yum -y update" "dnf -y update")
-PACKAGE_INSTALL=("apt -y install" "apt -y install" "yum -y install" "yum -y install" "dnf -y install")
-PACKAGE_REMOVE=("apt -y remove" "apt -y remove" "yum -y remove" "yum -y remove" "dnf -y remove")
-PACKAGE_UNINSTALL=("apt -y autoremove" "apt -y autoremove" "yum -y autoremove" "yum -y autoremove" "dnf -y autoremove")
+PACKAGE_UPDATE=("apt-get update" "apt-get update" "yum -y update" "yum -y update" "yum -y update")
+PACKAGE_INSTALL=("apt -y install" "apt -y install" "yum -y install" "yum -y install" "yum -y install")
+PACKAGE_REMOVE=("apt -y remove" "apt -y remove" "yum -y remove" "yum -y remove" "yum -y remove")
+PACKAGE_UNINSTALL=("apt -y autoremove" "apt -y autoremove" "yum -y autoremove" "yum -y autoremove" "yum -y autoremove")
 
 [[ $EUID -ne 0 ]] && red "注意: 请在root用户下运行脚本" && exit 1
 
@@ -56,20 +56,22 @@ inst_cert(){
     green "Hysteria 2 协议证书申请方式如下："
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 必应自签证书 ${YELLOW}（默认）${PLAIN}"
-    echo -e " ${GREEN}2.${PLAIN} Certbot 自动申请"
+    echo -e " ${GREEN}2.${PLAIN} Acme 脚本自动申请"
     echo -e " ${GREEN}3.${PLAIN} 自定义证书路径"
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
-        read -p "请输入需要申请证书的域名：" domain
-        [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
-        green "已输入的域名：$domain" && sleep 1
+        cert_path="/root/cert.crt"
+        key_path="/root/private.key"
 
-        cert_path="/etc/letsencrypt/live/${domain}/fullchain.pem"
-        key_path="/etc/letsencrypt/live/${domain}/privkey.pem"
+        chmod -R 777 /root
+        
+        chmod +rw /root/cert.crt
+        chmod +rw /root/private.key
 
-        if [[ -f "$cert_path" && -f "$key_path" ]] && [[ -s "$cert_path" && -s "$key_path" ]]; then
-            green "检测到已有域名：$domain 的证书，正在应用"
+        if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
+            domain=$(cat /root/ca.log)
+            green "检测到原有域名：$domain 的证书，正在应用"
             hy_domain=$domain
         else
             WARPv4Status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
@@ -84,6 +86,9 @@ inst_cert(){
                 realip
             fi
 
+            read -p "请输入需要申请证书的域名：" domain
+            [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
+            green "已输入的域名：$domain" && sleep 1
             domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
             if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
                 domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
@@ -101,9 +106,9 @@ inst_cert(){
                     exit 1
                 fi
             fi
-
+            # 修改这里的IP比对逻辑，允许多个IP匹配
             if echo "$domainIP" | grep -qw "$ip"; then
-                ${PACKAGE_INSTALL[int]} certbot
+                ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
                 if [[ $SYSTEM == "CentOS" ]]; then
                     ${PACKAGE_INSTALL[int]} cronie
                     systemctl start crond
@@ -113,18 +118,24 @@ inst_cert(){
                     systemctl start cron
                     systemctl enable cron
                 fi
-                email="${domain}_$(date +%s%N | md5sum | cut -c 1-16)@gmail.com"
-                systemctl stop nginx >/dev/null 2>&1
-                systemctl stop apache2 >/dev/null 2>&1
-                fuser -k 80/tcp || true
-                fuser -k 80/udp || true
-                certbot certonly --standalone --preferred-challenges http -d ${domain} --agree-tos --email ${email} --non-interactive --keep --key-type ecdsa
-                if [[ -f "$cert_path" && -f "$key_path" ]] && [[ -s "$cert_path" && -s "$key_path" ]]; then
-                    green "证书申请成功! 证书文件已保存到 $cert_path"
-                    hy_domain=$domain
+                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
+                source ~/.bashrc
+                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+                if [[ -n $(echo $ip | grep ":") ]]; then
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
                 else
-                    red "证书申请失败，请检查域名是否正确，或查看 certbot 日志"
-                    exit 1
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                fi
+                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
+                    echo $domain > /root/ca.log
+                    sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
+                    echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
+                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
+                    yellow "证书crt文件路径如下: /root/cert.crt"
+                    yellow "私钥key文件路径如下: /root/private.key"
+                    hy_domain=$domain
                 fi
             else
                 red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
@@ -151,7 +162,6 @@ inst_cert(){
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
-        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
         chmod 777 /etc/hysteria/cert.crt
@@ -296,7 +306,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir -p /root/hy
+    mkdir /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -337,7 +347,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"
+    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
   },
   "transport": {
     "udp": {
@@ -433,7 +443,7 @@ hysteriaswitch(){
     echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
     echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
     echo ""
-    read -rp "请输入选项 [1-3]: " switchInput
+    read -rp "请输入选项 [0-3]: " switchInput
     case $switchInput in
         1 ) starthysteria ;;
         2 ) stophysteria ;;
@@ -599,4 +609,3 @@ menu() {
 }
 
 menu
-
