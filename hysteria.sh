@@ -22,10 +22,10 @@ yellow(){
 # 判断系统及定义系统安装依赖方式
 REGEX=("debian" "ubuntu" "centos|red hat|kernel|oracle linux|alma|rocky" "'amazon linux'" "fedora")
 RELEASE=("Debian" "Ubuntu" "CentOS" "CentOS" "Fedora")
-PACKAGE_UPDATE=("apt-get update" "apt-get update" "yum -y update" "yum -y update" "yum -y update")
-PACKAGE_INSTALL=("apt -y install" "apt -y install" "yum -y install" "yum -y install" "yum -y install")
-PACKAGE_REMOVE=("apt -y remove" "apt -y remove" "yum -y remove" "yum -y remove" "yum -y remove")
-PACKAGE_UNINSTALL=("apt -y autoremove" "apt -y autoremove" "yum -y autoremove" "yum -y autoremove" "yum -y autoremove")
+PACKAGE_UPDATE=("apt-get update" "apt-get update" "yum -y update" "yum -y update" "dnf -y update")
+PACKAGE_INSTALL=("apt -y install" "apt -y install" "yum -y install" "yum -y install" "dnf -y install")
+PACKAGE_REMOVE=("apt -y remove" "apt -y remove" "yum -y remove" "yum -y remove" "dnf -y remove")
+PACKAGE_UNINSTALL=("apt -y autoremove" "apt -y autoremove" "yum -y autoremove" "yum -y autoremove" "dnf -y autoremove")
 
 [[ $EUID -ne 0 ]] && red "注意: 请在root用户下运行脚本" && exit 1
 
@@ -41,30 +41,27 @@ done
 
 [[ -z $SYSTEM ]] && red "目前暂不支持你的VPS的操作系统！" && exit 1
 
-# Function to install packages with system-specific package manager
-install_packages(){
-    local packages=("$@")
-    if [[ -z $(type -P curl) ]]; then
-        if [[ ! $SYSTEM == "CentOS" ]]; then
-            ${PACKAGE_UPDATE[int]}
-        fi
-        ${PACKAGE_INSTALL[int]} curl
+if [[ -z $(type -P curl) ]]; then
+    if [[ ! $SYSTEM == "CentOS" ]]; then
+        ${PACKAGE_UPDATE[int]}
     fi
+    ${PACKAGE_INSTALL[int]} curl
+fi
 
-    if [[ -z $(type -P dig) ]]; then
-        if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
-            ${PACKAGE_INSTALL[int]} dnsutils
-        elif [[ $SYSTEM == "CentOS" || $SYSTEM == "Fedora" ]]; then
-            ${PACKAGE_INSTALL[int]} bind-utils
-        else
-            red "无法自动安装 dig 工具，请手动安装并重试！"
-            exit 1
-        fi
+# 新增以下代码，确保 dig 命令已安装
+if ! command -v dig >/dev/null 2>&1; then
+    green "正在安装 dig 命令..."
+    if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
+        apt-get update
+        apt-get install -y dnsutils
+    elif [[ $SYSTEM == "CentOS" ]]; then
+        yum install -y bind-utils
+    elif [[ $SYSTEM == "Fedora" ]]; then
+        dnf install -y bind-utils
+    else
+        ${PACKAGE_INSTALL[int]} dnsutils || ${PACKAGE_INSTALL[int]} bind-utils
     fi
-
-    # Install other necessary packages
-    ${PACKAGE_INSTALL[int]} "${packages[@]}"
-}
+fi
 
 realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
@@ -74,25 +71,20 @@ inst_cert(){
     green "Hysteria 2 协议证书申请方式如下："
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 必应自签证书 ${YELLOW}（默认）${PLAIN}"
-    echo -e " ${GREEN}2.${PLAIN} Acme 脚本自动申请"
+    echo -e " ${GREEN}2.${PLAIN} Certbot 自动申请"
     echo -e " ${GREEN}3.${PLAIN} 自定义证书路径"
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
-        cert_path="/etc/hysteria/cert.crt"
-        key_path="/etc/hysteria/private.key"
+        read -p "请输入需要申请证书的域名：" domain
+        [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
+        green "已输入的域名：$domain" && sleep 1
 
-        # 创建 /etc/hysteria/ 目录
-        mkdir -p /etc/hysteria
+        cert_path="/etc/letsencrypt/live/${domain}/fullchain.pem"
+        key_path="/etc/letsencrypt/live/${domain}/privkey.pem"
 
-        # Ensure certificate and key have correct permissions
-        chmod -R 700 /etc/hysteria
-        chmod 600 /etc/hysteria/cert.crt 2>/dev/null || touch /etc/hysteria/cert.crt
-        chmod 600 /etc/hysteria/private.key 2>/dev/null || touch /etc/hysteria/private.key
-
-        if [[ -f /etc/hysteria/cert.crt && -f /etc/hysteria/private.key ]] && [[ -s /etc/hysteria/cert.crt && -s /etc/hysteria/private.key ]] && [[ -f /etc/hysteria/ca.log ]]; then
-            domain=$(cat /etc/hysteria/ca.log)
-            green "检测到原有域名：$domain 的证书，正在应用"
+        if [[ -f "$cert_path" && -f "$key_path" ]] && [[ -s "$cert_path" && -s "$key_path" ]]; then
+            green "检测到已有域名：$domain 的证书，正在应用"
             hy_domain=$domain
         else
             WARPv4Status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
@@ -107,9 +99,6 @@ inst_cert(){
                 realip
             fi
 
-            read -p "请输入需要申请证书的域名：" domain
-            [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
-            green "已输入的域名：$domain" && sleep 1
             domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
             if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
                 domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
@@ -117,8 +106,8 @@ inst_cert(){
             if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
                 red "未解析出 IP，请检查域名是否输入有误" 
                 yellow "是否尝试强行匹配？"
-                echo -e " ${GREEN}1.${PLAIN} 是，将使用强行匹配"
-                echo -e " ${GREEN}2.${PLAIN} 否，退出脚本"
+                green "1. 是，将使用强行匹配"
+                green "2. 否，退出脚本"
                 read -p "请输入选项 [1-2]：" ipChoice
                 if [[ $ipChoice == 1 ]]; then
                     yellow "将尝试强行匹配以申请域名证书"
@@ -127,10 +116,9 @@ inst_cert(){
                     exit 1
                 fi
             fi
-            # 修改这里的IP比对逻辑，允许多个IP匹配
-            if echo "$domainIP" | grep -qw "$ip"; then
-                install_packages wget sudo socat openssl cron netfilter-persistent
 
+            if echo "$domainIP" | grep -qw "$ip"; then
+                ${PACKAGE_INSTALL[int]} certbot
                 if [[ $SYSTEM == "CentOS" ]]; then
                     ${PACKAGE_INSTALL[int]} cronie
                     systemctl start crond
@@ -140,30 +128,18 @@ inst_cert(){
                     systemctl start cron
                     systemctl enable cron
                 fi
-
-                # Install acme.sh
-                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
-                if [[ $? -ne 0 ]]; then
-                    red "acme.sh 安装失败，请检查网络或手动安装 acme.sh。"
-                    exit 1
-                fi
-                source ~/.bashrc
-                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
-                else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
-                fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /etc/hysteria/private.key --fullchain-file /etc/hysteria/cert.crt --ecc
-                if [[ -f /etc/hysteria/cert.crt && -f /etc/hysteria/private.key ]] && [[ -s /etc/hysteria/cert.crt && -s /etc/hysteria/private.key ]]; then
-                    echo $domain > /etc/hysteria/ca.log
-                    sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
-                    echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
-                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /etc/hysteria/ 目录下"
-                    yellow "证书crt文件路径如下: /etc/hysteria/cert.crt"
-                    yellow "私钥key文件路径如下: /etc/hysteria/private.key"
+                email="${domain}_$(date +%s%N | md5sum | cut -c 1-16)@gmail.com"
+                systemctl stop nginx >/dev/null 2>&1
+                systemctl stop apache2 >/dev/null 2>&1
+                fuser -k 80/tcp || true
+                fuser -k 80/udp || true
+                certbot certonly --standalone --preferred-challenges http -d ${domain} --agree-tos --email ${email} --non-interactive --keep --key-type ecdsa
+                if [[ -f "$cert_path" && -f "$key_path" ]] && [[ -s "$cert_path" && -s "$key_path" ]]; then
+                    green "证书申请成功! 证书文件已保存到 $cert_path"
                     hy_domain=$domain
+                else
+                    red "证书申请失败，请检查域名是否正确，或查看 certbot 日志"
+                    exit 1
                 fi
             else
                 red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
@@ -183,13 +159,8 @@ inst_cert(){
         yellow "证书域名：$domain"
         hy_domain=$domain
 
-        # 复制证书和密钥到 /etc/hysteria/ 目录
-        cp "$cert_path" /etc/hysteria/cert.crt
-        cp "$key_path" /etc/hysteria/private.key
-
-        # 设置正确的权限
-        chown hysteria:hysteria /etc/hysteria/cert.crt /etc/hysteria/private.key
-        chmod 600 /etc/hysteria/cert.crt /etc/hysteria/private.key
+        chmod +rw $cert_path
+        chmod +rw $key_path
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
@@ -198,8 +169,8 @@ inst_cert(){
         mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 600 /etc/hysteria/cert.crt
-        chmod 600 /etc/hysteria/private.key
+        chmod 777 /etc/hysteria/cert.crt
+        chmod 777 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -282,7 +253,7 @@ insthysteria(){
     if [[ ! ${SYSTEM} == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
     fi
-    install_packages wget sudo qrencode procps iptables-persistent netfilter-persistent
+    ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
@@ -333,16 +304,12 @@ EOF
         last_port=$port
     fi
 
-    # 给 IPv6 地址加中括号
-    if [[ -n $(echo $ip | grep ":") ]]; then
-        last_ip="[$ip]"
-    else
-        last_ip=$ip
-    fi
+    # 使用域名作为服务器地址
+    server_addr="$hy_domain"
 
     mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
-server: $last_ip:$last_port
+server: $server_addr:$last_port
 
 auth: $auth_pwd
 
@@ -367,7 +334,7 @@ transport:
 EOF
     cat << EOF > /root/hy/hy-client.json
 {
-  "server": "$last_ip:$last_port",
+  "server": "$server_addr:$last_port",
   "auth": "$auth_pwd",
   "tls": {
     "sni": "$hy_domain",
@@ -381,7 +348,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
+    "listen": "127.0.0.1:7887"
   },
   "transport": {
     "udp": {
@@ -408,7 +375,7 @@ dns:
 proxies:
   - name: 1keji-Hysteria2
     type: hysteria2
-    server: $last_ip
+    server: $server_addr
     port: $port
     password: $auth_pwd
     sni: $hy_domain
@@ -423,30 +390,18 @@ rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    url="hysteria2://$auth_pwd@$server_addr:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $url > /root/hy/url.txt
-    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    nohopurl="hysteria2://$auth_pwd@$server_addr:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $nohopurl > /root/hy/url-nohop.txt
 
-    # 输出配置文件内容以供检查
-    echo "================= /etc/hysteria/config.yaml 内容如下 ================="
-    cat /etc/hysteria/config.yaml
-    echo "======================================================================="
-
-    # 启动 Hysteria 服务并记录日志
     systemctl daemon-reload
     systemctl enable hysteria-server
     systemctl start hysteria-server
-
-    # 检查服务状态
     if [[ -n $(systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
         green "Hysteria 2 服务启动成功"
     else
-        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出"
-        # 记录详细日志
-        systemctl status hysteria-server -l > /root/hysteria_server_status.log
-        red "详细日志已保存到 /root/hysteria_server_status.log"
-        exit 1
+        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出" && exit 1
     fi
     red "======================================================================================"
     green "Hysteria 2 代理服务安装完成"
@@ -464,7 +419,7 @@ EOF
 unsthysteria(){
     systemctl stop hysteria-server.service >/dev/null 2>&1
     systemctl disable hysteria-server.service >/dev/null 2>&1
-    rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
+    rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
     rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
     iptables -t nat -F PREROUTING >/dev/null 2>&1
     netfilter-persistent save >/dev/null 2>&1
@@ -489,7 +444,7 @@ hysteriaswitch(){
     echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
     echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
     echo ""
-    read -rp "请输入选项 [0-3]: " switchInput
+    read -rp "请输入选项 [1-3]: " switchInput
     case $switchInput in
         1 ) starthysteria ;;
         2 ) stophysteria ;;
@@ -517,10 +472,8 @@ changeport(){
     sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
     # 更新 iptables 规则
-    if grep -q "$oldport" /etc/hysteria/config.yaml; then
-        iptables -t nat -D PREROUTING -p udp --dport $oldport -j REDIRECT --to-ports $port >/dev/null 2>&1
-        ip6tables -t nat -D PREROUTING -p udp --dport $oldport -j REDIRECT --to-ports $port >/dev/null 2>&1
-    fi
+    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
 
     if [[ -n $firstport ]]; then
         iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
@@ -620,7 +573,7 @@ showconf(){
 update_core(){
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
-
+    
     rm -f install_server.sh
 }
 
@@ -657,3 +610,4 @@ menu() {
 }
 
 menu
+
