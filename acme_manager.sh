@@ -8,10 +8,10 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-# 检查是否以root权限运行
+# 检查是否以 root 权限运行
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}请以root用户或使用sudo运行此脚本.${NC}"
+        echo -e "${RED}请以 root 用户或使用 sudo 运行此脚本.${NC}"
         exit 1
     fi
 }
@@ -132,7 +132,9 @@ get_acme_path() {
 # 注册账户（如果尚未注册）
 register_account() {
     get_acme_path
-    ACCOUNT_REGISTERED=$($ACME_SH --accountlist | grep "Account Register Email" | wc -l)
+    echo -e "${GREEN}正在检查账户注册状态...${NC}"
+    # 尝试列出账户，如果命令无效，则直接注册
+    ACCOUNT_REGISTERED=$($ACME_SH --register-account -m "$USER_EMAIL" --server zerossl 2>&1 | grep -c "Already registered")
     if [ "$ACCOUNT_REGISTERED" -eq 0 ]; then
         echo -e "${GREEN}请注册 acme.sh 账户以使用 ZeroSSL 或 Let's Encrypt CA.${NC}"
         while true; do
@@ -168,7 +170,7 @@ apply_certificate() {
             echo -e "${GREEN}使用 DNS 验证...${NC}"
             echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
             # 使用 DNS 手动验证，需要用户手动添加 DNS TXT 记录
-            $ACME_SH --issue --dns -d "$DOMAIN" --debug 2
+            $ACME_SH --issue --dns dns_manual -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
@@ -184,9 +186,9 @@ apply_certificate() {
                             mkdir -p "$WEBROOT"
                             if [ $? -eq 0 ]; then
                                 echo -e "${GREEN}目录创建成功: $WEBROOT${NC}"
+                                break
                             else
                                 echo -e "${RED}无法创建目录: $WEBROOT${NC}"
-                                exit 1
                             fi
                             ;;
                         *)
