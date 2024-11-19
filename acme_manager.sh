@@ -175,7 +175,7 @@ apply_certificate() {
             echo -e "${GREEN}使用 DNS 验证...${NC}"
             echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
             # 使用手动 DNS 验证，需要用户手动添加 DNS TXT 记录
-            $ACME_SH --issue --dns --yes-I-know-dns-manual-mode-enough-please-dont-ask -d "$DOMAIN" --debug 2
+            $ACME_SH --issue --dns manual --yes-I-know-dns-manual-mode-enough-please-dont-ask -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
