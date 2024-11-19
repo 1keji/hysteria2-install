@@ -272,24 +272,6 @@ insthysteria(){
     inst_pwd
     inst_site
 
-    # 修改以下代码，根据证书类型设置服务器地址
-    if [[ $hy_domain != "www.bing.com" ]]; then
-        last_ip=$hy_domain
-    else
-        if [[ -n $(echo $ip | grep ":") ]]; then
-            last_ip="[$ip]"
-        else
-            last_ip=$ip
-        fi
-    fi
-
-    # 确定最终入站端口范围
-    if [[ -n $firstport ]]; then
-        last_port="$port,$firstport-$endport"
-    else
-        last_port=$port
-    fi
-
     # 设置 Hysteria 配置文件
     cat << EOF > /etc/hysteria/config.yaml
 listen: :$port
@@ -315,9 +297,29 @@ masquerade:
     rewriteHost: true
 EOF
 
+    # 确定最终入站端口范围
+    if [[ -n $firstport ]]; then
+        last_port="$port,$firstport-$endport"
+    else
+        last_port=$port
+    fi
+
+    # 根据 hy_domain 决定使用域名还是 IP 地址作为 server 地址
+    if [[ "$hy_domain" == "www.bing.com" ]]; then
+        # 使用 IP 地址
+        if [[ -n $(echo $ip | grep ":") ]]; then
+            server_addr="[$ip]"
+        else
+            server_addr=$ip
+        fi
+    else
+        # 使用域名
+        server_addr=$hy_domain
+    fi
+
     mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
-server: $last_ip:$last_port
+server: $server_addr:$last_port
 
 auth: $auth_pwd
 
@@ -342,7 +344,7 @@ transport:
 EOF
     cat << EOF > /root/hy/hy-client.json
 {
-  "server": "$last_ip:$last_port",
+  "server": "$server_addr:$last_port",
   "auth": "$auth_pwd",
   "tls": {
     "sni": "$hy_domain",
@@ -383,7 +385,7 @@ dns:
 proxies:
   - name: 1keji-Hysteria2
     type: hysteria2
-    server: $last_ip
+    server: $server_addr
     port: $port
     password: $auth_pwd
     sni: $hy_domain
@@ -398,9 +400,9 @@ rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    url="hysteria2://$auth_pwd@$server_addr:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $url > /root/hy/url.txt
-    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    nohopurl="hysteria2://$auth_pwd@$server_addr:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $nohopurl > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
@@ -508,4 +510,136 @@ changepasswd(){
     fi
 
     sed -i "s/^password: $oldpasswd/password: $passwd/g" /etc/hysteria/config.yaml
-    sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/
+    sed -i "s/auth: $oldpasswd/auth: $passwd/g" /root/hy/hy-client.yaml
+    sed -i "s/\"$oldpasswd\"/\"$passwd\"/g" /root/hy/hy-client.json
+
+    stophysteria && starthysteria
+
+    green "Hysteria 2 节点密码已成功修改为：$passwd"
+    yellow "请手动更新客户端配置文件以使用节点"
+    showconf
+}
+
+change_cert(){
+    old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
+
+    inst_cert
+
+    sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
+    sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
+    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
+
+    # 更新 server_addr
+    if [[ "$hy_domain" == "www.bing.com" ]]; then
+        # 使用 IP 地址
+        if [[ -n $(echo $ip | grep ":") ]]; then
+            server_addr="[$ip]"
+        else
+            server_addr=$ip
+        fi
+    else
+        # 使用域名
+        server_addr=$hy_domain
+    fi
+
+    # 更新客户端配置文件中的 server 地址
+    sed -i "s#^server: .*#server: $server_addr:$last_port#g" /root/hy/hy-client.yaml
+    sed -i "s#\"server\": \".*\"#\"server\": \"$server_addr:$last_port\"#g" /root/hy/hy-client.json
+
+    # 更新分享链接
+    url="hysteria2://$auth_pwd@$server_addr:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    echo $url > /root/hy/url.txt
+    nohopurl="hysteria2://$auth_pwd@$server_addr:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    echo $nohopurl > /root/hy/url-nohop.txt
+
+    stophysteria && starthysteria
+
+    green "Hysteria 2 节点证书类型已成功修改"
+    yellow "请手动更新客户端配置文件以使用节点"
+    showconf
+}
+
+changeproxysite(){
+    oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
+
+    inst_site
+
+    sed -i "s#$oldproxysite#$proxysite#g" /etc/hysteria/config.yaml
+
+    stophysteria && starthysteria
+
+    green "Hysteria 2 节点伪装网站已成功修改为：$proxysite"
+}
+
+changeconf(){
+    green "Hysteria 2 配置变更选择如下:"
+    echo -e " ${GREEN}1.${PLAIN} 修改端口"
+    echo -e " ${GREEN}2.${PLAIN} 修改密码"
+    echo -e " ${GREEN}3.${PLAIN} 修改证书类型"
+    echo -e " ${GREEN}4.${PLAIN} 修改伪装网站"
+    echo ""
+    read -p " 请选择操作 [1-4]：" confAnswer
+    case $confAnswer in
+        1 ) changeport ;;
+        2 ) changepasswd ;;
+        3 ) change_cert ;;
+        4 ) changeproxysite ;;
+        * ) exit 1 ;;
+    esac
+}
+
+showconf(){
+    yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
+    red "$(cat /root/hy/hy-client.yaml)"
+    yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
+    red "$(cat /root/hy/hy-client.json)"
+    yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
+    yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
+    red "$(cat /root/hy/url.txt)"
+    yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
+    red "$(cat /root/hy/url-nohop.txt)"
+}
+
+update_core(){
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+    bash install_server.sh
+    
+    rm -f install_server.sh
+}
+
+menu() {
+    clear
+    echo "##############################################################"
+    echo -e "#                  ${RED}Hysteria 2 一键安装脚本${PLAIN}                   #"
+    echo -e "# ${GREEN}作者${PLAIN}: 1keji                                                #"
+    echo -e "# ${GREEN}博客${PLAIN}: https://1keji.net                                    #"
+    echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji/hysteria2-install    #"
+    echo "##############################################################"
+    echo ""
+    echo -e " ${GREEN}1.${PLAIN} 安装 Hysteria 2"
+    echo -e " ${GREEN}2.${PLAIN} ${RED}卸载 Hysteria 2${PLAIN}"
+    echo " -------------"
+    echo -e " ${GREEN}3.${PLAIN} 关闭、开启、重启 Hysteria 2"
+    echo -e " ${GREEN}4.${PLAIN} 修改 Hysteria 2 配置"
+    echo -e " ${GREEN}5.${PLAIN} 显示 Hysteria 2 配置文件"
+    echo " -------------"
+    echo -e " ${GREEN}6.${PLAIN} 更新 Hysteria 2 内核"
+    echo " -------------"
+    echo -e " ${GREEN}0.${PLAIN} 退出脚本"
+    echo ""
+    read -rp "请输入选项 [0-6]: " menuInput
+    case $menuInput in
+        1 ) insthysteria ;;
+        2 ) unsthysteria ;;
+        3 ) hysteriaswitch ;;
+        4 ) changeconf ;;
+        5 ) showconf ;;
+        6 ) update_core ;;
+        * ) exit 1 ;;
+    esac
+}
+
+menu
