@@ -578,11 +578,11 @@ update_core(){
 
 menu() {
     clear
-    echo "#############################################################"
+    echo "##############################################################"
     echo -e "#                  ${RED}Hysteria 2 一键安装脚本${PLAIN}                   #"
-    echo -e "# ${GREEN}作者${PLAIN}: 1keji                                             #"
-    echo -e "# ${GREEN}博客${PLAIN}: https://1keji.net                                 #"
-    echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji/hysteria2-install #"
+    echo -e "# ${GREEN}作者${PLAIN}: 1keji                                                #"
+    echo -e "# ${GREEN}博客${PLAIN}: https://1keji.net                                    #"
+    echo -e "# ${GREEN}GitHub 项目${PLAIN}: https://github.com/1keji/hysteria2-install    #"
     echo "##############################################################"
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 安装 Hysteria 2"
