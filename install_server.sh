@@ -612,7 +612,7 @@ parse_arguments() {
         fi
         ;;
       '-c' | '--check')
-        if [[ -n "$OPERATION" && "$OPERATION" != 'check_update' ]]; then
+        if [[ -n "$OPERATION" && "$OPERATION" != 'check' ]]; then
           show_argument_error_and_exit "Option '-c' or '--check' is in conflict with other options."
         fi
         OPERATION='check_update'
@@ -628,7 +628,7 @@ parse_arguments() {
         if [[ -z "$LOCAL_FILE" ]]; then
           show_argument_error_and_exit "Please specify the local binary to install for option '-l' or '--local'."
         fi
-        shift
+        break
         ;;
       *)
         show_argument_error_and_exit "Unknown option '$1'"
@@ -658,6 +658,7 @@ parse_arguments() {
       ;;
   esac
 }
+
 
 ###
 # FILE TEMPLATES
