@@ -135,7 +135,7 @@ register_account() {
     echo -e "${GREEN}正在检查账户注册状态...${NC}"
     
     # 尝试列出账户信息，检查是否已注册
-    ACCOUNT_INFO=$($ACME_SH --list)
+    ACCOUNT_INFO=$($ACME_SH --list 2>/dev/null)
     if echo "$ACCOUNT_INFO" | grep -q "Account Register Email"; then
         echo -e "${GREEN}账户已经注册.${NC}"
     else
@@ -175,7 +175,7 @@ apply_certificate() {
             echo -e "${GREEN}使用 DNS 验证...${NC}"
             echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
             # 使用手动 DNS 验证，需要用户手动添加 DNS TXT 记录
-            $ACME_SH --issue --dns manual --yes-I-know-dns-manual-mode-enough-please-dont-ask -d "$DOMAIN" --debug 2
+            $ACME_SH --issue --yes-I-know-dns-manual-mode-enough-please-dont-ask --dns manual -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
@@ -277,7 +277,7 @@ manage_certificates() {
             return
             ;;
         *)
-            echo -e "${RED}无效的选择.${NC}"
+            echo -e "${RED}无效的选择，请重新选择.${NC}"
             ;;
     esac
 }
