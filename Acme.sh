@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Function to check and install dependencies
 install_dependency() {
@@ -48,11 +48,15 @@ install_acme() {
 
 # Function to check Acme.sh status
 check_acme_status() {
-  acme.sh --version
-  if [ $? -eq 0 ]; then
-    echo "Acme.sh is installed and functioning properly."
+  if command -v acme.sh &>/dev/null; then
+    acme.sh --version
+    if [ $? -eq 0 ]; then
+      echo "Acme.sh is installed and functioning properly."
+    else
+      echo "Acme.sh is not functioning correctly. Please troubleshoot manually."
+    fi
   else
-    echo "Acme.sh is not functioning correctly. Please troubleshoot manually."
+    echo "Acme.sh is not installed."
   fi
 }
 
