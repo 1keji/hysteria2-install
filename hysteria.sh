@@ -127,7 +127,7 @@ inst_cert(){
             fi
             # 修改这里的IP比对逻辑，允许多个IP匹配
             if echo "$domainIP" | grep -qw "$ip"; then
-                install_packages curl wget sudo socat openssl cron dnsutils bind-utils
+                install_packages wget sudo socat openssl cron netfilter-persistent
 
                 if [[ $SYSTEM == "CentOS" ]]; then
                     ${PACKAGE_INSTALL[int]} cronie
@@ -421,13 +421,25 @@ EOF
     nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $nohopurl > /root/hy/url-nohop.txt
 
+    # 输出配置文件内容以供检查
+    echo "================= /etc/hysteria/config.yaml 内容如下 ================="
+    cat /etc/hysteria/config.yaml
+    echo "======================================================================="
+
+    # 启动 Hysteria 服务并记录日志
     systemctl daemon-reload
     systemctl enable hysteria-server
     systemctl start hysteria-server
+
+    # 检查服务状态
     if [[ -n $(systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
         green "Hysteria 2 服务启动成功"
     else
-        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出" && exit 1
+        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出"
+        # 记录详细日志
+        systemctl status hysteria-server -l > /root/hysteria_server_status.log
+        red "详细日志已保存到 /root/hysteria_server_status.log"
+        exit 1
     fi
     red "======================================================================================"
     green "Hysteria 2 代理服务安装完成"
