@@ -133,9 +133,12 @@ get_acme_path() {
 register_account() {
     get_acme_path
     echo -e "${GREEN}正在检查账户注册状态...${NC}"
-    # 尝试列出账户，如果命令无效，则直接注册
-    ACCOUNT_REGISTERED=$($ACME_SH --register-account -m "$USER_EMAIL" --server zerossl 2>&1 | grep -c "Already registered")
-    if [ "$ACCOUNT_REGISTERED" -eq 0 ]; then
+    
+    # 尝试列出账户信息，检查是否已注册
+    ACCOUNT_INFO=$($ACME_SH --list)
+    if echo "$ACCOUNT_INFO" | grep -q "Account Register Email"; then
+        echo -e "${GREEN}账户已经注册.${NC}"
+    else
         echo -e "${GREEN}请注册 acme.sh 账户以使用 ZeroSSL 或 Let's Encrypt CA.${NC}"
         while true; do
             read -p "请输入您的电子邮件地址 (用于注册 acme.sh 账户): " USER_EMAIL
@@ -152,8 +155,6 @@ register_account() {
             exit 1
         fi
         echo -e "${GREEN}账户注册成功.${NC}"
-    else
-        echo -e "${GREEN}账户已经注册.${NC}"
     fi
 }
 
@@ -163,19 +164,29 @@ apply_certificate() {
     register_account
     echo -e "${GREEN}请输入你的域名 (例如: example.com):${NC}"
     read DOMAIN
+    if [[ -z "$DOMAIN" ]]; then
+        echo -e "${RED}域名不能为空.${NC}"
+        return
+    fi
     echo -e "${GREEN}请选择验证方式: (1) DNS 验证 (2) HTTP 验证${NC}"
     read METHOD
     case "$METHOD" in
         1)
             echo -e "${GREEN}使用 DNS 验证...${NC}"
             echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
-            # 使用 DNS 手动验证，需要用户手动添加 DNS TXT 记录
-            $ACME_SH --issue --dns dns_manual -d "$DOMAIN" --debug 2
+            # 使用手动 DNS 验证，需要用户手动添加 DNS TXT 记录
+            $ACME_SH --issue --dns --yes-I-know-dns-manual-mode-enough-please-dont-ask -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
             while true; do
                 read -p "请输入 webroot 目录 (例如: /var/www/html): " WEBROOT
+                # 如果用户输入为空，提示并设置默认值
+                if [[ -z "$WEBROOT" ]]; then
+                    echo -e "${RED}webroot 目录不能为空.${NC}"
+                    echo -e "${GREEN}将使用默认 webroot 目录: /var/www/html${NC}"
+                    WEBROOT="/var/www/html"
+                fi
                 if [ -d "$WEBROOT" ]; then
                     break
                 else
@@ -230,13 +241,25 @@ manage_certificates() {
         2)
             echo -e "${GREEN}请输入要更新的域名:${NC}"
             read UPDATE_DOMAIN
+            if [[ -z "$UPDATE_DOMAIN" ]]; then
+                echo -e "${RED}域名不能为空.${NC}"
+                return
+            fi
             $ACME_SH --renew -d "$UPDATE_DOMAIN"
             ;;
         3)
             echo -e "${GREEN}请输入域名:${NC}"
             read INSTALL_DOMAIN
+            if [[ -z "$INSTALL_DOMAIN" ]]; then
+                echo -e "${RED}域名不能为空.${NC}"
+                return
+            fi
             echo -e "${GREEN}请输入目标路径 (例如: /etc/ssl/certs):${NC}"
             read TARGET_PATH
+            if [[ -z "$TARGET_PATH" ]]; then
+                echo -e "${RED}目标路径不能为空.${NC}"
+                return
+            fi
             $ACME_SH --install-cert -d "$INSTALL_DOMAIN" \
                 --key-file "$TARGET_PATH/$INSTALL_DOMAIN.key" \
                 --fullchain-file "$TARGET_PATH/$INSTALL_DOMAIN.crt"
@@ -244,6 +267,10 @@ manage_certificates() {
         4)
             echo -e "${GREEN}请输入要删除的域名:${NC}"
             read DELETE_DOMAIN
+            if [[ -z "$DELETE_DOMAIN" ]]; then
+                echo -e "${RED}域名不能为空.${NC}"
+                return
+            fi
             $ACME_SH --remove -d "$DELETE_DOMAIN"
             ;;
         0)
