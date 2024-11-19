@@ -304,16 +304,22 @@ EOF
         last_port=$port
     fi
 
-    # 给 IPv6 地址加中括号
-    if [[ -n $(echo $ip | grep ":") ]]; then
-        last_ip="[$ip]"
+    # 根据 hy_domain 决定使用域名还是 IP 地址作为 server 地址
+    if [[ "$hy_domain" == "www.bing.com" ]]; then
+        # 使用 IP 地址
+        if [[ -n $(echo $ip | grep ":") ]]; then
+            server_addr="[$ip]"
+        else
+            server_addr=$ip
+        fi
     else
-        last_ip=$ip
+        # 使用域名
+        server_addr=$hy_domain
     fi
 
     mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
-server: $last_ip:$last_port
+server: $server_addr:$last_port
 
 auth: $auth_pwd
 
@@ -338,7 +344,7 @@ transport:
 EOF
     cat << EOF > /root/hy/hy-client.json
 {
-  "server": "$last_ip:$last_port",
+  "server": "$server_addr:$last_port",
   "auth": "$auth_pwd",
   "tls": {
     "sni": "$hy_domain",
@@ -379,7 +385,7 @@ dns:
 proxies:
   - name: 1keji-Hysteria2
     type: hysteria2
-    server: $last_ip
+    server: $server_addr
     port: $port
     password: $auth_pwd
     sni: $hy_domain
@@ -394,9 +400,9 @@ rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    url="hysteria2://$auth_pwd@$server_addr:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $url > /root/hy/url.txt
-    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    nohopurl="hysteria2://$auth_pwd@$server_addr:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $nohopurl > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
@@ -526,6 +532,29 @@ change_cert(){
     sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
     sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
 
+    # 更新 server_addr
+    if [[ "$hy_domain" == "www.bing.com" ]]; then
+        # 使用 IP 地址
+        if [[ -n $(echo $ip | grep ":") ]]; then
+            server_addr="[$ip]"
+        else
+            server_addr=$ip
+        fi
+    else
+        # 使用域名
+        server_addr=$hy_domain
+    fi
+
+    # 更新客户端配置文件中的 server 地址
+    sed -i "s#^server: .*#server: $server_addr:$last_port#g" /root/hy/hy-client.yaml
+    sed -i "s#\"server\": \".*\"#\"server\": \"$server_addr:$last_port\"#g" /root/hy/hy-client.json
+
+    # 更新分享链接
+    url="hysteria2://$auth_pwd@$server_addr:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    echo $url > /root/hy/url.txt
+    nohopurl="hysteria2://$auth_pwd@$server_addr:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    echo $nohopurl > /root/hy/url-nohop.txt
+
     stophysteria && starthysteria
 
     green "Hysteria 2 节点证书类型已成功修改"
@@ -614,4 +643,3 @@ menu() {
 }
 
 menu
-
