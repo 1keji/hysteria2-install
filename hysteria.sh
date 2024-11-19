@@ -48,6 +48,21 @@ if [[ -z $(type -P curl) ]]; then
     ${PACKAGE_INSTALL[int]} curl
 fi
 
+# 新增以下代码，确保 dig 命令已安装
+if ! command -v dig >/dev/null 2>&1; then
+    green "正在安装 dig 命令..."
+    if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
+        apt-get update
+        apt-get install -y dnsutils
+    elif [[ $SYSTEM == "CentOS" ]]; then
+        yum install -y bind-utils
+    elif [[ $SYSTEM == "Fedora" ]]; then
+        dnf install -y bind-utils
+    else
+        ${PACKAGE_INSTALL[int]} dnsutils || ${PACKAGE_INSTALL[int]} bind-utils
+    fi
+fi
+
 realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
 }
