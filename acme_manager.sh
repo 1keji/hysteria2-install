@@ -82,13 +82,38 @@ install_acme() {
             echo -e "${RED}acme.sh 安装失败.${NC}"
             exit 1
         fi
-        source ~/.bashrc
-        echo -e "${GREEN}acme.sh 安装成功.${NC}"
+        # 获取 acme.sh 的绝对路径
+        if [ -f "$HOME/.acme.sh/acme.sh" ]; then
+            ACME_SH="$HOME/.acme.sh/acme.sh"
+        elif [ -f "/root/.acme.sh/acme.sh" ]; then
+            ACME_SH="/root/.acme.sh/acme.sh"
+        else
+            echo -e "${RED}无法找到 acme.sh 安装路径.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}acme.sh 安装成功. 路径: $ACME_SH${NC}"
+    fi
+}
+
+# 获取 acme.sh 的路径
+get_acme_path() {
+    if [ -z "$ACME_SH" ]; then
+        if command -v acme.sh >/dev/null 2>&1; then
+            ACME_SH=$(command -v acme.sh)
+        elif [ -f "$HOME/.acme.sh/acme.sh" ]; then
+            ACME_SH="$HOME/.acme.sh/acme.sh"
+        elif [ -f "/root/.acme.sh/acme.sh" ]; then
+            ACME_SH="/root/.acme.sh/acme.sh"
+        else
+            echo -e "${RED}无法找到 acme.sh，请先安装.${NC}"
+            exit 1
+        fi
     fi
 }
 
 # 申请证书
 apply_certificate() {
+    get_acme_path
     echo -e "${GREEN}请输入你的域名 (例如: example.com):${NC}"
     read DOMAIN
     echo -e "${GREEN}请选择验证方式: (1) DNS 验证 (2) HTTP 验证${NC}"
@@ -96,11 +121,11 @@ apply_certificate() {
     case "$METHOD" in
         1)
             echo -e "${GREEN}使用 DNS 验证...${NC}"
-            acme.sh --issue --dns -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-please-dont-ask
+            $ACME_SH --issue --dns -d "$DOMAIN" --yes-I-know-dns-manual-mode-enough-please-dont-ask
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
-            acme.sh --issue -d "$DOMAIN" --webroot /var/www/html
+            $ACME_SH --issue -d "$DOMAIN" --webroot /var/www/html
             ;;
         *)
             echo -e "${RED}无效的选择.${NC}"
@@ -117,6 +142,7 @@ apply_certificate() {
 
 # 管理证书
 manage_certificates() {
+    get_acme_path
     echo -e "${GREEN}acme.sh 证书管理:${NC}"
     echo "1. 列出所有证书"
     echo "2. 更新证书"
@@ -127,26 +153,26 @@ manage_certificates() {
 
     case "$MANAGE_CHOICE" in
         1)
-            acme.sh --list
+            $ACME_SH --list
             ;;
         2)
             echo -e "${GREEN}请输入要更新的域名:${NC}"
             read UPDATE_DOMAIN
-            acme.sh --renew -d "$UPDATE_DOMAIN"
+            $ACME_SH --renew -d "$UPDATE_DOMAIN"
             ;;
         3)
             echo -e "${GREEN}请输入域名:${NC}"
             read INSTALL_DOMAIN
             echo -e "${GREEN}请输入目标路径 (例如: /etc/ssl/certs):${NC}"
             read TARGET_PATH
-            acme.sh --install-cert -d "$INSTALL_DOMAIN" \
+            $ACME_SH --install-cert -d "$INSTALL_DOMAIN" \
                 --key-file "$TARGET_PATH/$INSTALL_DOMAIN.key" \
                 --fullchain-file "$TARGET_PATH/$INSTALL_DOMAIN.crt"
             ;;
         4)
             echo -e "${GREEN}请输入要删除的域名:${NC}"
             read DELETE_DOMAIN
-            acme.sh --remove -d "$DELETE_DOMAIN"
+            $ACME_SH --remove -d "$DELETE_DOMAIN"
             ;;
         0)
             return
@@ -159,8 +185,9 @@ manage_certificates() {
 
 # 卸载 acme.sh
 uninstall_acme() {
+    get_acme_path
     echo -e "${GREEN}正在卸载 acme.sh...${NC}"
-    ~/.acme.sh/acme.sh --uninstall
+    $ACME_SH --uninstall
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}acme.sh 卸载成功.${NC}"
     else
