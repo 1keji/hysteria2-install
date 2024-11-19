@@ -79,17 +79,19 @@ inst_cert(){
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
-        cert_path="/root/cert.crt"
-        key_path="/root/private.key"
+        cert_path="/etc/hysteria/cert.crt"
+        key_path="/etc/hysteria/private.key"
 
-        chmod -R 700 /root
+        # 创建 /etc/hysteria/ 目录
+        mkdir -p /etc/hysteria
 
         # Ensure certificate and key have correct permissions
-        chmod 600 /root/cert.crt 2>/dev/null || touch /root/cert.crt
-        chmod 600 /root/private.key 2>/dev/null || touch /root/private.key
+        chmod -R 700 /etc/hysteria
+        chmod 600 /etc/hysteria/cert.crt 2>/dev/null || touch /etc/hysteria/cert.crt
+        chmod 600 /etc/hysteria/private.key 2>/dev/null || touch /etc/hysteria/private.key
 
-        if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
-            domain=$(cat /root/ca.log)
+        if [[ -f /etc/hysteria/cert.crt && -f /etc/hysteria/private.key ]] && [[ -s /etc/hysteria/cert.crt && -s /etc/hysteria/private.key ]] && [[ -f /etc/hysteria/ca.log ]]; then
+            domain=$(cat /etc/hysteria/ca.log)
             green "检测到原有域名：$domain 的证书，正在应用"
             hy_domain=$domain
         else
@@ -153,14 +155,14 @@ inst_cert(){
                 else
                     bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
                 fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
-                if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
-                    echo $domain > /root/ca.log
+                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /etc/hysteria/private.key --fullchain-file /etc/hysteria/cert.crt --ecc
+                if [[ -f /etc/hysteria/cert.crt && -f /etc/hysteria/private.key ]] && [[ -s /etc/hysteria/cert.crt && -s /etc/hysteria/private.key ]]; then
+                    echo $domain > /etc/hysteria/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
                     echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
-                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
-                    yellow "证书crt文件路径如下: /root/cert.crt"
-                    yellow "私钥key文件路径如下: /root/private.key"
+                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /etc/hysteria/ 目录下"
+                    yellow "证书crt文件路径如下: /etc/hysteria/cert.crt"
+                    yellow "私钥key文件路径如下: /etc/hysteria/private.key"
                     hy_domain=$domain
                 fi
             else
@@ -181,8 +183,13 @@ inst_cert(){
         yellow "证书域名：$domain"
         hy_domain=$domain
 
-        chmod 600 $cert_path
-        chmod 600 $key_path
+        # 复制证书和密钥到 /etc/hysteria/ 目录
+        cp "$cert_path" /etc/hysteria/cert.crt
+        cp "$key_path" /etc/hysteria/private.key
+
+        # 设置正确的权限
+        chown hysteria:hysteria /etc/hysteria/cert.crt /etc/hysteria/private.key
+        chmod 600 /etc/hysteria/cert.crt /etc/hysteria/private.key
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
@@ -457,7 +464,7 @@ EOF
 unsthysteria(){
     systemctl stop hysteria-server.service >/dev/null 2>&1
     systemctl disable hysteria-server.service >/dev/null 2>&1
-    rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
+    rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/hysteria-server@.service
     rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
     iptables -t nat -F PREROUTING >/dev/null 2>&1
     netfilter-persistent save >/dev/null 2>&1
