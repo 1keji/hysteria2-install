@@ -135,11 +135,14 @@ register_account() {
     ACCOUNT_REGISTERED=$($ACME_SH --account-list | grep "Account Register Email" | wc -l)
     if [ "$ACCOUNT_REGISTERED" -eq 0 ]; then
         echo -e "${GREEN}请注册 acme.sh 账户以使用 ZeroSSL 或 Let's Encrypt CA.${NC}"
-        read -p "请输入您的电子邮件地址 (用于注册 acme.sh 账户): " USER_EMAIL
-        if [[ ! "$USER_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-            echo -e "${RED}无效的电子邮件地址.${NC}"
-            exit 1
-        fi
+        while true; do
+            read -p "请输入您的电子邮件地址 (用于注册 acme.sh 账户): " USER_EMAIL
+            if [[ "$USER_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+                break
+            else
+                echo -e "${RED}无效的电子邮件地址，请重新输入.${NC}"
+            fi
+        done
         echo -e "${GREEN}正在注册账户...${NC}"
         $ACME_SH --register-account -m "$USER_EMAIL"
         if [ $? -ne 0 ]; then
@@ -164,7 +167,7 @@ apply_certificate() {
         1)
             echo -e "${GREEN}使用 DNS 验证...${NC}"
             echo -e "${GREEN}请按照以下提示添加相应的 DNS TXT 记录:${NC}"
-            $ACME_SH --issue --dns --yes-I-know-dns-manual-mode-enough-please-dont-ask -d "$DOMAIN" --debug 2
+            $ACME_SH --issue --dns -d "$DOMAIN" --debug 2
             ;;
         2)
             echo -e "${GREEN}使用 HTTP 验证...${NC}"
