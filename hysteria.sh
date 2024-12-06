@@ -56,7 +56,7 @@ inst_cert(){
     green "Hysteria 2 协议证书申请方式如下："
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 必应自签证书 ${YELLOW}（默认）${PLAIN}"
-    echo -e " ${GREEN}2.${PLAIN} Acme 脚本自动申请"
+    echo -e " ${GREEN}2.${PLAIN} 使用 Certbot 自动申请"
     echo -e " ${GREEN}3.${PLAIN} 自定义证书路径"
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
@@ -64,87 +64,101 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        chmod -R 777 /root
-        
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        chmod -R 700 /root
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
             green "检测到原有域名：$domain 的证书，正在应用"
             hy_domain=$domain
         else
-            WARPv4Status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-            WARPv6Status=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-            if [[ $WARPv4Status =~ on|plus ]] || [[ $WARPv6Status =~ on|plus ]]; then
-                wg-quick down wgcf >/dev/null 2>&1
-                systemctl stop warp-go >/dev/null 2>&1
-                realip
-                wg-quick up wgcf >/dev/null 2>&1
-                systemctl start warp-go >/dev/null 2>&1
-            else
-                realip
+            # 检查并安装 Certbot
+            if [[ -z $(type -P certbot) ]]; then
+                green "Certbot 未安装，正在安装 Certbot..."
+                if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
+                    ${PACKAGE_UPDATE[int]}
+                    ${PACKAGE_INSTALL[int]} certbot
+                elif [[ $SYSTEM == "CentOS" ]]; then
+                    ${PACKAGE_INSTALL[int]} epel-release
+                    ${PACKAGE_UPDATE[int]}
+                    ${PACKAGE_INSTALL[int]} certbot
+                elif [[ $SYSTEM == "Fedora" ]]; then
+                    ${PACKAGE_UPDATE[int]}
+                    ${PACKAGE_INSTALL[int]} certbot
+                else
+                    red "不支持的操作系统，请手动安装 Certbot。"
+                    exit 1
+                fi
             fi
+
+            # 获取真实IP
+            realip
 
             read -p "请输入需要申请证书的域名：" domain
             [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
             green "已输入的域名：$domain" && sleep 1
-            domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
-                domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
-            fi
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
-                red "未解析出 IP，请检查域名是否输入有误" 
-                yellow "是否尝试强行匹配？"
-                green "1. 是，将使用强行匹配"
-                green "2. 否，退出脚本"
-                read -p "请输入选项 [1-2]：" ipChoice
-                if [[ $ipChoice == 1 ]]; then
-                    yellow "将尝试强行匹配以申请域名证书"
-                else
-                    red "将退出脚本"
-                    exit 1
-                fi
-            fi
-            # 修改这里的IP比对逻辑，允许多个IP匹配
-            if echo "$domainIP" | grep -qw "$ip"; then
-                ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
-                if [[ $SYSTEM == "CentOS" ]]; then
-                    ${PACKAGE_INSTALL[int]} cronie
-                    systemctl start crond
-                    systemctl enable crond
-                else
-                    ${PACKAGE_INSTALL[int]} cron
-                    systemctl start cron
-                    systemctl enable cron
-                fi
-                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
-                source ~/.bashrc
-                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
-                else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
-                fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
-                if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
-                    echo $domain > /root/ca.log
-                    sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
-                    echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
-                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
-                    yellow "证书crt文件路径如下: /root/cert.crt"
-                    yellow "私钥key文件路径如下: /root/private.key"
-                    hy_domain=$domain
-                fi
-            else
-                red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
-                green "建议如下："
-                yellow "1. 请确保CloudFlare小云朵为关闭状态(仅限DNS), 其他域名解析或CDN网站设置同理"
-                yellow "2. 请检查DNS解析设置的IP是否为VPS的真实IP"
-                yellow "3. 脚本可能跟不上时代, 建议截图发布到GitHub Issues、GitLab Issues、论坛或TG群询问"
+
+            # 检查域名解析是否正确
+            domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" A 2>/dev/null)
+            domainIPv6=$(dig @2001:4860:4860::8888 +time=2 +short "$domain" AAAA 2>/dev/null)
+            if [[ -z $domainIP && -z $domainIPv6 ]]; then
+                red "未解析出 IP，请检查域名是否输入有误或 DNS 设置是否正确。"
                 exit 1
             fi
+
+            # 确保域名指向当前VPS
+            if [[ -n $ip ]]; then
+                if [[ "$domainIP" != "$ip" && "$domainIPv6" != "$ip" ]]; then
+                    yellow "域名解析的IP与当前VPS的IP不匹配，请确认。"
+                    read -rp "是否继续申请证书？ [y/N]: " confirm
+                    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                        red "取消证书申请。"
+                        exit 1
+                    fi
+                fi
+            fi
+
+            # 停止 Hysteria 服务以释放端口
+            systemctl stop hysteria-server >/dev/null 2>&1
+
+            # 使用 Certbot 申请证书
+            green "正在使用 Certbot 申请证书..."
+            certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "admin@$domain" --redirect
+
+            if [[ $? -ne 0 ]]; then
+                red "Certbot 申请证书失败，请检查域名和网络连接。"
+                # 重启 Hysteria 服务
+                systemctl start hysteria-server >/dev/null 2>&1
+                exit 1
+            fi
+
+            # 复制证书到指定路径
+            cp "/etc/letsencrypt/live/$domain/fullchain.pem" "$cert_path"
+            cp "/etc/letsencrypt/live/$domain/privkey.pem" "$key_path"
+
+            # 设置权限
+            chmod 600 "$cert_path" "$key_path"
+
+            # 启动 Hysteria 服务
+            systemctl start hysteria-server >/dev/null 2>&1
+
+            # 保存域名到 ca.log
+            echo "$domain" > /root/ca.log
+
+            # 设置 Certbot 自动续期钩子
+            green "正在设置 Certbot 自动续期钩子..."
+            mkdir -p /etc/letsencrypt/renewal-hooks/post
+            cat << EOF > /etc/letsencrypt/renewal-hooks/post/hysteria-renew.sh
+#!/bin/bash
+cp "/etc/letsencrypt/live/$domain/fullchain.pem" "$cert_path"
+cp "/etc/letsencrypt/live/$domain/privkey.pem" "$key_path"
+systemctl reload hysteria-server
+EOF
+            chmod +x /etc/letsencrypt/renewal-hooks/post/hysteria-renew.sh
+
+            green "证书申请成功！证书文件已保存到 /root 文件夹下。"
+            yellow "证书crt文件路径如下: /root/cert.crt"
+            yellow "私钥key文件路径如下: /root/private.key"
+            hy_domain=$domain
         fi
     elif [[ $certInput == 3 ]]; then
         read -p "请输入公钥文件 crt 的路径：" cert_path
@@ -164,8 +178,8 @@ inst_cert(){
         key_path="/etc/hysteria/private.key"
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 777 /etc/hysteria/cert.crt
-        chmod 777 /etc/hysteria/private.key
+        chmod 700 /etc/hysteria/cert.crt
+        chmod 700 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -201,7 +215,7 @@ inst_jump(){
         if [[ $firstport -ge $endport ]]; then
             until [[ $firstport -le $endport ]]; do
                 if [[ $firstport -ge $endport ]]; then
-                    red "你设置的起始端口小于末尾端口，请重新输入起始和末尾端口"
+                    red "你设置的起始端口必须小于末尾端口，请重新输入。"
                     read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
                     read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
                 fi
@@ -529,7 +543,7 @@ change_cert(){
 }
 
 changeproxysite(){
-    oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
+    oldproxysite=$(grep '^proxy:' /etc/hysteria/config.yaml | grep 'url:' | awk -F "https://" '{print $2}')
 
     inst_site
 
