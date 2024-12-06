@@ -318,7 +318,9 @@ insthysteria(){
     fi
     ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+    # 下载并使用修正后的 install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh -O install_server.sh
+    chmod +x install_server.sh
     bash install_server.sh
     rm -f install_server.sh
 
@@ -641,7 +643,8 @@ showconf(){
 }
 
 update_core(){
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh -O install_server.sh
+    chmod +x install_server.sh
     bash install_server.sh
 
     rm -f install_server.sh
