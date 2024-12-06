@@ -301,72 +301,35 @@ inst_site(){
 }
 
 insthysteria(){
-    realip
+    warpv6=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+    warpv4=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+    if [[ $warpv4 =~ on|plus || $warpv6 =~ on|plus ]]; then
+        wg-quick down wgcf >/dev/null 2>&1
+        systemctl stop warp-go >/dev/null 2>&1
+        realip
+        systemctl start warp-go >/dev/null 2>&1
+        wg-quick up wgcf >/dev/null 2>&1
+    else
+        realip
+    fi
 
     if [[ ! ${SYSTEM} == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
     fi
-    ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent unzip
+    ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
-    # 检测系统架构
-    ARCH=$(uname -m)
-    if [[ "$ARCH" == "x86_64" ]]; then
-        ARCH="amd64"
-    elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
-        ARCH="arm64"
+    # 下载并使用修正后的 install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh -O install_server.sh
+    chmod +x install_server.sh
+    bash install_server.sh
+    rm -f install_server.sh
+
+    if [[ -f "/usr/local/bin/hysteria" ]]; then
+        green "Hysteria 2 安装成功！"
     else
-        red "不支持的架构: $ARCH"
+        red "Hysteria 2 安装失败！"
         exit 1
     fi
-
-    # 获取最新版本
-    echo "Checking for latest version ..."
-    LATEST_VERSION=$(curl -s -H "User-Agent: Hysteria-Installer" "https://api.github.com/repos/HyNetwork/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-    
-    if [[ -z "$LATEST_VERSION" ]]; then
-        red "无法从 GitHub API 获取最新版本。"
-        exit 1
-    fi
-
-    echo "Latest version is v$LATEST_VERSION"
-
-    # 构建下载链接
-    DOWNLOAD_URL="https://github.com/HyNetwork/hysteria/releases/download/v$LATEST_VERSION/hysteria-linux-$ARCH.zip"
-
-    # 下载 Hysteria
-    green "正在下载 Hysteria 版本 v$LATEST_VERSION ..."
-    wget -O hysteria.zip -q --show-progress "$DOWNLOAD_URL"
-    if [[ $? -ne 0 ]]; then
-        red "下载 Hysteria 失败，请检查网络连接或下载链接。"
-        exit 1
-    fi
-
-    # 解压并安装
-    unzip hysteria.zip -d hysteria_tmp >/dev/null 2>&1
-    if [[ $? -ne 0 ]]; then
-        red "解压 Hysteria 失败。"
-        rm -rf hysteria.zip hysteria_tmp
-        exit 1
-    fi
-
-    chmod +x hysteria_tmp/hysteria
-    mv hysteria_tmp/hysteria /usr/local/bin/
-    rm -rf hysteria.zip hysteria_tmp
-
-    # 创建 systemd 服务文件
-    cat << EOF > /etc/systemd/system/hysteria-server.service
-[Unit]
-Description=Hysteria 2 Service
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.yaml
-Restart=on-failure
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
 
     # 询问用户 Hysteria 配置
     inst_cert
@@ -399,12 +362,17 @@ masquerade:
     rewriteHost: true
 EOF
 
+    # 确定最终入站端口范围，仅记录主端口
+    last_port="$port"
+
     # 将 last_ip 设置为域名
     last_ip="$hy_domain"
 
+    # 开放主端口的防火墙规则已在 inst_port 和 inst_jump 中设置
+
     mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
-server: $last_ip:$port
+server: $last_ip:$last_port
 
 auth: $auth_pwd
 
@@ -430,7 +398,7 @@ EOF
 
     cat << EOF > /root/hy/hy-client.json
 {
-  "server": "$last_ip:$port",
+  "server": "$last_ip:$last_port",
   "auth": "$auth_pwd",
   "tls": {
     "sni": "$hy_domain",
@@ -488,25 +456,19 @@ rules:
   - MATCH,Proxy
 EOF
 
-    url="hysteria2://$auth_pwd@$last_ip:$port/?insecure=0&sni=$hy_domain#1keji-Hysteria2"
+    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $url > /root/hy/url.txt
-    echo $url > /root/hy/url-nohop.txt  # 因为不再使用端口跳跃
+    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    echo $nohopurl > /root/hy/url-nohop.txt
 
-    # 重新加载 systemd 配置并启动服务
     systemctl daemon-reload
     systemctl enable hysteria-server
     systemctl start hysteria-server
-
-    # 检查服务状态
-    if [[ $(systemctl is-active hysteria-server) == "active" ]]; then
+    if [[ -n $(systemctl status hysteria-server 2>/dev/null | grep -w active) && -f '/etc/hysteria/config.yaml' ]]; then
         green "Hysteria 2 服务启动成功"
     else
-        red "Hysteria 2 服务启动失败，请运行以下命令查看日志："
-        red "systemctl status hysteria-server"
-        red "journalctl -u hysteria-server -f"
-        exit 1
+        red "Hysteria 2 服务启动失败，请运行 systemctl status hysteria-server 查看服务状态并反馈，脚本退出" && exit 1
     fi
-
     red "======================================================================================"
     green "Hysteria 2 代理服务安装完成"
     yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
@@ -523,7 +485,8 @@ EOF
 unsthysteria(){
     systemctl stop hysteria-server.service >/dev/null 2>&1
     systemctl disable hysteria-server.service >/dev/null 2>&1
-    rm -f /etc/systemd/system/hysteria-server.service /usr/local/bin/hysteria /etc/hysteria/config.yaml /root/hy /root/hysteria.sh
+    rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
+    rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
     iptables -t nat -F PREROUTING >/dev/null 2>&1
     ip6tables -t nat -F PREROUTING >/dev/null 2>&1
     netfilter-persistent save >/dev/null 2>&1
@@ -548,7 +511,7 @@ hysteriaswitch(){
     echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
     echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
     echo ""
-    read -rp "请输入选项 [1-3]: " switchInput
+    read -rp "请输入选项 [0-3]: " switchInput
     case $switchInput in
         1 ) starthysteria ;;
         2 ) stophysteria ;;
@@ -562,6 +525,7 @@ changeport(){
 
     read -p "设置 Hysteria 2 端口[1-65535]（回车则随机分配端口）：" port
     [[ -z $port ]] && port=$(shuf -i 2000-65535 -n 1)
+
     until [[ -z $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; do
         if [[ -n $(ss -tunlp | grep -w udp | awk '{print $5}' | sed 's/.*://g' | grep -w "$port") ]]; then
             echo -e "${RED} $port ${PLAIN} 端口已经被其他程序占用，请更换端口重试！"
@@ -571,8 +535,19 @@ changeport(){
     done
 
     sed -i "s/^listen: :$oldport/listen: :$port/g" /etc/hysteria/config.yaml
-    sed -i "s/$old_ip:$oldport/$last_ip:$port/g" /root/hy/hy-client.yaml
-    sed -i "s/$old_ip:$oldport/$last_ip:$port/g" /root/hy/hy-client.json
+    sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
+    sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
+
+    # 更新 iptables 规则
+    if [[ -n $firstport && -n $endport ]]; then
+        iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+        ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    fi
+
+    if [[ -n $firstport && -n $endport ]]; then
+        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+    fi
 
     # 开放新端口的防火墙规则
     iptables -I INPUT -p udp --dport $port -j ACCEPT
@@ -668,64 +643,11 @@ showconf(){
 }
 
 update_core(){
-    # 手动更新 Hysteria 内核
-    # 检查系统架构
-    ARCH=$(uname -m)
-    if [[ "$ARCH" == "x86_64" ]]; then
-        ARCH="amd64"
-    elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
-        ARCH="arm64"
-    else
-        red "不支持的架构: $ARCH"
-        exit 1
-    fi
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh -O install_server.sh
+    chmod +x install_server.sh
+    bash install_server.sh
 
-    # 获取最新版本
-    echo "Checking for latest version ..."
-    LATEST_VERSION=$(curl -s -H "User-Agent: Hysteria-Installer" "https://api.github.com/repos/HyNetwork/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
-
-    if [[ -z "$LATEST_VERSION" ]]; then
-        red "无法从 GitHub API 获取最新版本。"
-        exit 1
-    fi
-
-    echo "Latest version is v$LATEST_VERSION"
-
-    # 构建下载链接
-    DOWNLOAD_URL="https://github.com/HyNetwork/hysteria/releases/download/v$LATEST_VERSION/hysteria-linux-$ARCH.zip"
-
-    # 下载 Hysteria
-    green "正在下载 Hysteria 版本 v$LATEST_VERSION ..."
-    wget -O hysteria.zip -q --show-progress "$DOWNLOAD_URL"
-    if [[ $? -ne 0 ]]; then
-        red "下载 Hysteria 失败，请检查网络连接或下载链接。"
-        exit 1
-    fi
-
-    # 解压并安装
-    unzip hysteria.zip -d hysteria_tmp >/dev/null 2>&1
-    if [[ $? -ne 0 ]]; then
-        red "解压 Hysteria 失败。"
-        rm -rf hysteria.zip hysteria_tmp
-        exit 1
-    fi
-
-    chmod +x hysteria_tmp/hysteria
-    mv hysteria_tmp/hysteria /usr/local/bin/
-    rm -rf hysteria.zip hysteria_tmp
-
-    # 重新启动 Hysteria 服务
-    systemctl daemon-reload
-    systemctl restart hysteria-server
-
-    if [[ $(systemctl is-active hysteria-server) == "active" ]]; then
-        green "Hysteria 2 内核已成功更新到 v$LATEST_VERSION 并重新启动服务"
-    else
-        red "Hysteria 2 服务启动失败，请运行以下命令查看日志："
-        red "systemctl status hysteria-server"
-        red "journalctl -u hysteria-server -f"
-        exit 1
-    fi
+    rm -f install_server.sh
 }
 
 menu() {
