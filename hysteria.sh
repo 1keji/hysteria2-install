@@ -351,18 +351,14 @@ masquerade:
 EOF
 
     # 确定最终入站端口范围
-    if [[ -n $firstport ]]; then
+    if [[ -n $firstport && -n $endport ]]; then
         last_port="$port,$firstport-$endport"
     else
         last_port=$port
     fi
 
-    # 给 IPv6 地址加中括号
-    if [[ -n $(echo $ip | grep ":") ]]; then
-        last_ip="[$ip]"
-    else
-        last_ip=$ip
-    fi
+    # 将 last_ip 设置为域名
+    last_ip="$hy_domain"
 
     mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
@@ -383,7 +379,7 @@ quic:
 fastOpen: true
 
 socks5:
-  listen: 127.0.0.1:7887  # 修改此处端口号为您想要的端口，例如7887
+  listen: 127.0.0.1:7887
 
 transport:
   udp:
@@ -405,7 +401,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
+    "listen": "127.0.0.1:7887"
   },
   "transport": {
     "udp": {
