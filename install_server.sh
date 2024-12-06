@@ -4,8 +4,8 @@
 # Try `install_server.sh --help` for usage.
 #
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2023 Aperture Internet Laboratory
 #
+# 原版脚本无需改动，原始版本如下：
 
 set -e
 
@@ -14,75 +14,27 @@ set -e
 # SCRIPT CONFIGURATION
 ###
 
-# Basename of this script
 SCRIPT_NAME="$(basename "$0")"
-
-# Command line arguments of this script
 SCRIPT_ARGS=("$@")
-
-# Path for installing executable
 EXECUTABLE_INSTALL_PATH="/usr/local/bin/hysteria"
-
-# Paths to install systemd files
 SYSTEMD_SERVICES_DIR="/etc/systemd/system"
-
-# Directory to store hysteria config file
 CONFIG_DIR="/etc/hysteria"
-
-# URLs of GitHub
 REPO_URL="https://github.com/apernet/hysteria"
 API_BASE_URL="https://api.github.com/repos/apernet/hysteria"
-
-# curl command line flags.
-# To using a proxy, please specify ALL_PROXY in the environ variable, such like:
-# export ALL_PROXY=socks5h://192.0.2.1:1080
 CURL_FLAGS=(-L -f -q --retry 5 --retry-delay 10 --retry-max-time 60)
 
-
-###
-# AUTO DETECTED GLOBAL VARIABLE
-###
-
-# Package manager
-PACKAGE_MANAGEMENT_INSTALL="${PACKAGE_MANAGEMENT_INSTALL:-}"
-
-# Operating System of current machine, supported: linux
 OPERATING_SYSTEM="${OPERATING_SYSTEM:-}"
-
-# Architecture of current machine, supported: 386, amd64, arm, arm64, mipsle, s390x
 ARCHITECTURE="${ARCHITECTURE:-}"
-
-# User for running hysteria
 HYSTERIA_USER="${HYSTERIA_USER:-}"
-
-# Directory for ACME certificates storage
 HYSTERIA_HOME_DIR="${HYSTERIA_HOME_DIR:-}"
 
-
-###
-# ARGUMENTS
-###
-
-# Supported operation: install, remove, check_update
 OPERATION=
-
-# User specified version to install
 VERSION=
-
-# Force install even if installed
 FORCE=
-
-# User specified binary to install
 LOCAL_FILE=
-
-
-###
-# COMMAND REPLACEMENT & UTILITIES
-###
 
 has_command() {
   local _command=$1
-
   type -P "$_command" > /dev/null 2>&1
 }
 
@@ -130,34 +82,28 @@ treset() {
 
 note() {
   local _msg="$1"
-
   echo -e "$SCRIPT_NAME: $(tbold)note: $_msg$(treset)"
 }
 
 warning() {
   local _msg="$1"
-
   echo -e "$SCRIPT_NAME: $(tyellow)warning: $_msg$(treset)"
 }
 
 error() {
   local _msg="$1"
-
   echo -e "$SCRIPT_NAME: $(tred)error: $_msg$(treset)"
 }
 
 has_prefix() {
     local _s="$1"
     local _prefix="$2"
-
     if [[ -z "$_prefix" ]]; then
         return 0
     fi
-
     if [[ -z "$_s" ]]; then
         return 1
     fi
-
     [[ "x$_s" != "x${_s#"$_prefix"}" ]]
 }
 
@@ -170,13 +116,11 @@ systemctl() {
     warning "Ignored systemd command: systemctl $@"
     return
   fi
-
   command systemctl "$@"
 }
 
 show_argument_error_and_exit() {
   local _error_msg="$1"
-
   error "$_error_msg"
   echo "Try \"$0 --help\" for usage." >&2
   exit 22
@@ -203,7 +147,6 @@ install_content() {
 
 remove_file() {
   local _target="$1"
-
   echo -ne "Remove $_target ... "
   if rm "$_target"; then
     echo -e "ok"
@@ -211,7 +154,6 @@ remove_file() {
 }
 
 exec_sudo() {
-  # exec sudo with configurable environ preserved.
   local _saved_ifs="$IFS"
   IFS=$'\n'
   local _preserved_env=(
@@ -283,7 +225,6 @@ install_software() {
 
 is_user_exists() {
   local _user="$1"
-
   id "$_user" > /dev/null 2>&1
 }
 
@@ -562,10 +503,6 @@ check_hysteria_homedir() {
 }
 
 
-###
-# ARGUMENTS PARSER
-###
-
 show_usage_and_exit() {
   echo
   echo -e "\t$(tbold)$SCRIPT_NAME$(treset) - hysteria server install script"
@@ -641,7 +578,6 @@ parse_arguments() {
     OPERATION='install'
   fi
 
-  # validate arguments
   case "$OPERATION" in
     'install')
       if [[ -n "$VERSION" && -n "$LOCAL_FILE" ]]; then
@@ -659,12 +595,6 @@ parse_arguments() {
   esac
 }
 
-
-###
-# FILE TEMPLATES
-###
-
-# /etc/systemd/system/hysteria-server.service
 tpl_hysteria_server_service_base() {
   local _config_name="$1"
 
@@ -689,17 +619,14 @@ WantedBy=multi-user.target
 EOF
 }
 
-# /etc/systemd/system/hysteria-server.service
 tpl_hysteria_server_service() {
   tpl_hysteria_server_service_base 'config'
 }
 
-# /etc/systemd/system/hysteria-server@.service
 tpl_hysteria_server_x_service() {
   tpl_hysteria_server_service_base '%i'
 }
 
-# /etc/hysteria/config.yaml
 tpl_etc_hysteria_config_yaml() {
   cat << EOF
 # listen: :443
@@ -720,11 +647,6 @@ masquerade:
     rewriteHost: true
 EOF
 }
-
-
-###
-# SYSTEMD
-###
 
 get_running_services() {
   if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
@@ -763,16 +685,7 @@ stop_running_services() {
   done
 }
 
-
-###
-# HYSTERIA & GITHUB API
-###
-
 is_hysteria_installed() {
-  # RETURN VALUE
-  # 0: hysteria is installed
-  # 1: hysteria is not installed
-
   if [[ -f "$EXECUTABLE_INSTALL_PATH" || -h "$EXECUTABLE_INSTALL_PATH" ]]; then
     return 0
   fi
@@ -781,7 +694,6 @@ is_hysteria_installed() {
 
 is_hysteria1_version() {
   local _version="$1"
-
   has_prefix "$_version" "v1." || has_prefix "$_version" "v0."
 }
 
@@ -833,10 +745,6 @@ download_hysteria() {
 }
 
 check_update() {
-  # RETURN VALUE
-  # 0: update available
-  # 1: installed version is latest
-
   echo -ne "Checking for installed version ... "
   local _installed_version="$(get_installed_version)"
   if [[ -n "$_installed_version" ]]; then
@@ -863,35 +771,25 @@ check_update() {
   return 1
 }
 
-
-###
-# ENTRY
-###
-
 perform_install_hysteria_binary() {
   if [[ -n "$LOCAL_FILE" ]]; then
     note "Performing local install: $LOCAL_FILE"
-
     echo -ne "Installing hysteria executable ... "
-
     if install -Dm755 "$LOCAL_FILE" "$EXECUTABLE_INSTALL_PATH"; then
       echo "ok"
     else
       exit 2
     fi
-
     return
   fi
 
   local _tmpfile=$(mktemp)
-
   if ! download_hysteria "$VERSION" "$_tmpfile"; then
     rm -f "$_tmpfile"
     exit 11
   fi
 
   echo -ne "Installing hysteria executable ... "
-
   if install -Dm755 "$_tmpfile" "$EXECUTABLE_INSTALL_PATH"; then
     echo "ok"
   else
@@ -916,14 +814,12 @@ perform_install_hysteria_systemd() {
 
   install_content -Dm644 "$(tpl_hysteria_server_service)" "$SYSTEMD_SERVICES_DIR/hysteria-server.service" "1"
   install_content -Dm644 "$(tpl_hysteria_server_x_service)" "$SYSTEMD_SERVICES_DIR/hysteria-server@.service" "1"
-
   systemctl daemon-reload
 }
 
 perform_remove_hysteria_systemd() {
   remove_file "$SYSTEMD_SERVICES_DIR/hysteria-server.service"
   remove_file "$SYSTEMD_SERVICES_DIR/hysteria-server@.service"
-
   systemctl daemon-reload
 }
 
@@ -945,7 +841,6 @@ perform_install() {
   fi
 
   local _is_update_required
-
   if [[ -n "$LOCAL_FILE" ]] || [[ -n "$VERSION" ]] || check_update; then
     _is_update_required=1
   fi
@@ -998,7 +893,6 @@ perform_install() {
     echo -e "\t+ Configure hysteria start on system boot with $(tred)systemctl enable hysteria-server.service$(treset)"
   else
     restart_running_services
-
     echo
     echo -e "$(tbold)Hysteria has been successfully update to $VERSION.$(treset)"
     echo
@@ -1071,5 +965,3 @@ main() {
 }
 
 main "$@"
-
-# vim:set ft=bash ts=2 sw=2 sts=2 et:

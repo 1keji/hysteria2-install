@@ -303,6 +303,16 @@ insthysteria(){
         realip
     fi
 
+    # 新增代码：为 $ip 赋值
+    if [[ -n $ipv4 ]]; then
+        ip=$ipv4
+    elif [[ -n $ipv6 ]]; then
+        ip=$ipv6
+    else
+        red "无法获取服务器 IP 地址，请检查网络配置。"
+        exit 1
+    fi
+
     if [[ ! ${SYSTEM} == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
     fi
@@ -405,7 +415,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
+    "listen": "127.0.0.1:7887"
   },
   "transport": {
     "udp": {
@@ -670,3 +680,4 @@ menu() {
 }
 
 menu
+
