@@ -41,6 +41,7 @@ done
 
 [[ -z $SYSTEM ]] && red "目前暂不支持你的VPS的操作系统！" && exit 1
 
+# 确保安装 curl
 if [[ -z $(type -P curl) ]]; then
     if [[ ! $SYSTEM == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
@@ -48,8 +49,44 @@ if [[ -z $(type -P curl) ]]; then
     ${PACKAGE_INSTALL[int]} curl
 fi
 
+# 确保安装 dig
+install_dig(){
+    if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
+        ${PACKAGE_INSTALL[int]} dnsutils
+    elif [[ $SYSTEM == "CentOS" || $SYSTEM == "Fedora" ]]; then
+        ${PACKAGE_INSTALL[int]} bind-utils
+    else
+        red "无法自动安装 dig，请手动安装。"
+        exit 1
+    fi
+}
+
+if [[ -z $(type -P dig) ]]; then
+    green "dig 未安装，正在安装 dig 工具..."
+    install_dig
+fi
+
+# 确保安装 net-tools 用于 ss 命令
+if [[ -z $(type -P ss) ]]; then
+    green "ss 未安装，正在安装 net-tools 工具..."
+    if [[ $SYSTEM == "Debian" || $SYSTEM == "Ubuntu" ]]; then
+        ${PACKAGE_INSTALL[int]} net-tools
+    elif [[ $SYSTEM == "CentOS" || $SYSTEM == "Fedora" ]]; then
+        ${PACKAGE_INSTALL[int]} net-tools
+    fi
+fi
+
 realip(){
-    ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
+    # 获取所有服务器的IP地址，包括IPv4和IPv6
+    ipv4=$(curl -s4m8 ip.gs -k) || ipv4=""
+    ipv6=$(curl -s6m8 ip.gs -k) || ipv6=""
+    server_ips=()
+    if [[ -n $ipv4 ]]; then
+        server_ips+=("$ipv4")
+    fi
+    if [[ -n $ipv6 ]]; then
+        server_ips+=("$ipv6")
+    fi
 }
 
 inst_cert(){
@@ -90,7 +127,7 @@ inst_cert(){
                 fi
             fi
 
-            # 获取真实IP
+            # 获取服务器IP
             realip
 
             read -p "请输入需要申请证书的域名：" domain
@@ -105,15 +142,21 @@ inst_cert(){
                 exit 1
             fi
 
-            # 确保域名指向当前VPS
-            if [[ -n $ip ]]; then
-                if [[ "$domainIP" != "$ip" && "$domainIPv6" != "$ip" ]]; then
-                    yellow "域名解析的IP与当前VPS的IP不匹配，请确认。"
-                    read -rp "是否继续申请证书？ [y/N]: " confirm
-                    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-                        red "取消证书申请。"
-                        exit 1
-                    fi
+            # 确保域名指向服务器的某个IP
+            ip_match=0
+            for server_ip in "${server_ips[@]}"; do
+                if [[ "$domainIP" == "$server_ip" || "$domainIPv6" == "$server_ip" ]]; then
+                    ip_match=1
+                    break
+                fi
+            done
+
+            if [[ $ip_match -ne 1 ]]; then
+                yellow "域名解析的IP与当前VPS的IP不完全匹配，请确认。"
+                read -rp "是否继续申请证书？ [y/N]: " confirm
+                if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                    red "取消证书申请。"
+                    exit 1
                 fi
             fi
 
@@ -122,7 +165,7 @@ inst_cert(){
 
             # 使用 Certbot 申请证书
             green "正在使用 Certbot 申请证书..."
-            certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "admin@$domain" --redirect
+            certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "admin@$domain"
 
             if [[ $? -ne 0 ]]; then
                 red "Certbot 申请证书失败，请检查域名和网络连接。"
@@ -169,17 +212,18 @@ EOF
         yellow "证书域名：$domain"
         hy_domain=$domain
 
-        chmod +rw $cert_path
-        chmod +rw $key_path
+        chmod 600 "$cert_path"
+        chmod 600 "$key_path"
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
+        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 700 /etc/hysteria/cert.crt
-        chmod 700 /etc/hysteria/private.key
+        chmod 600 /etc/hysteria/cert.crt
+        chmod 600 /etc/hysteria/private.key
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -320,7 +364,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir /root/hy
+    mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -435,6 +479,7 @@ unsthysteria(){
     rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
     rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
     iptables -t nat -F PREROUTING >/dev/null 2>&1
+    ip6tables -t nat -F PREROUTING >/dev/null 2>&1
     netfilter-persistent save >/dev/null 2>&1
 
     green "Hysteria 2 已彻底卸载完成！"
@@ -485,10 +530,12 @@ changeport(){
     sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
     # 更新 iptables 规则
-    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
-    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    if [[ -n $firstport && -n $endport ]]; then
+        iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+        ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    fi
 
-    if [[ -n $firstport ]]; then
+    if [[ -n $firstport && -n $endport ]]; then
         iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
         ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
     fi
