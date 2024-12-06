@@ -56,15 +56,16 @@ inst_cert(){
     green "Hysteria 2 协议证书申请方式如下："
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 必应自签证书 ${YELLOW}（默认）${PLAIN}"
-    echo -e " ${GREEN}2.${PLAIN} Nginx + Certbot 自动申请证书（替换ACME流程）"
+    echo -e " ${GREEN}2.${PLAIN} Acme 脚本自动申请"
     echo -e " ${GREEN}3.${PLAIN} 自定义证书路径"
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
-        # 使用nginx+certbot申请证书替代acme逻辑
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
+
         chmod -R 777 /root
+        
         chmod +rw /root/cert.crt
         chmod +rw /root/private.key
 
@@ -105,66 +106,43 @@ inst_cert(){
                     exit 1
                 fi
             fi
-
-            # 放宽IP匹配限制，让用户可以CDN下申请
-            # 安装nginx和certbot
-            if [[ ! $SYSTEM == "CentOS" ]]; then
-                ${PACKAGE_UPDATE[int]}
-            fi
-            ${PACKAGE_INSTALL[int]} nginx certbot python3-certbot-nginx
-
-            systemctl start nginx
-            systemctl enable nginx
-
-            # 为该域名创建一个简单的nginx配置用于证书申请
-            CONFIG_PATH="/etc/nginx/sites-available/$domain"
-            ENABLED_PATH="/etc/nginx/sites-enabled/$domain"
-            mkdir -p /etc/nginx/sites-available
-            mkdir -p /etc/nginx/sites-enabled
-
-            # 简单的HTTP配置用于certbot验证
-            cat > "$CONFIG_PATH" <<EOF
-server {
-    listen 80;
-    server_name $domain;
-
-    location / {
-        return 200 'Certbot validation site';
-        add_header Content-Type text/plain;
-    }
-}
-EOF
-
-            if [ ! -f "$ENABLED_PATH" ]; then
-                ln -s "$CONFIG_PATH" "$ENABLED_PATH"
-            fi
-
-            nginx -t && systemctl reload nginx
-
-            # 使用随机邮箱地址
-            acme_email=$(date +%s%N | md5sum | cut -c 1-16)@example.com
-
-            # 使用certbot申请证书
-            certbot --nginx -d "$domain" --non-interactive --agree-tos -m "$acme_email"
-            if [[ $? -ne 0 ]]; then
-                red "Certbot 申请证书失败，请检查域名解析和Nginx设置"
-                exit 1
-            fi
-
-            # 证书路径位于 /etc/letsencrypt/live/$domain/fullchain.pem 和 privkey.pem
-            # 将其复制到/root目录以保持与原逻辑一致
-            cp /etc/letsencrypt/live/$domain/fullchain.pem /root/cert.crt
-            cp /etc/letsencrypt/live/$domain/privkey.pem /root/private.key
-
-            if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
-                echo $domain > /root/ca.log
-                # certbot自动续期通过timer，无需手动cron添加
-                green "证书申请成功! 证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
-                yellow "证书crt文件路径如下: /root/cert.crt"
-                yellow "私钥key文件路径如下: /root/private.key"
-                hy_domain=$domain
+            # 修改这里的IP比对逻辑，允许多个IP匹配
+            if echo "$domainIP" | grep -qw "$ip"; then
+                ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
+                if [[ $SYSTEM == "CentOS" ]]; then
+                    ${PACKAGE_INSTALL[int]} cronie
+                    systemctl start crond
+                    systemctl enable crond
+                else
+                    ${PACKAGE_INSTALL[int]} cron
+                    systemctl start cron
+                    systemctl enable cron
+                fi
+                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
+                source ~/.bashrc
+                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+                if [[ -n $(echo $ip | grep ":") ]]; then
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
+                else
+                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
+                fi
+                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
+                if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
+                    echo $domain > /root/ca.log
+                    sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
+                    echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
+                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
+                    yellow "证书crt文件路径如下: /root/cert.crt"
+                    yellow "私钥key文件路径如下: /root/private.key"
+                    hy_domain=$domain
+                fi
             else
-                red "证书文件未正常生成，请检查。"
+                red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
+                green "建议如下："
+                yellow "1. 请确保CloudFlare小云朵为关闭状态(仅限DNS), 其他域名解析或CDN网站设置同理"
+                yellow "2. 请检查DNS解析设置的IP是否为VPS的真实IP"
+                yellow "3. 脚本可能跟不上时代, 建议截图发布到GitHub Issues、GitLab Issues、论坛或TG群询问"
                 exit 1
             fi
         fi
@@ -184,7 +162,6 @@ EOF
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
-        mkdir -p /etc/hysteria
         openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
         openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
         chmod 777 /etc/hysteria/cert.crt
@@ -230,6 +207,7 @@ inst_jump(){
                 fi
             done
         fi
+        # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
         iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
         ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
         netfilter-persistent save >/dev/null 2>&1
@@ -241,6 +219,7 @@ inst_jump(){
 inst_pwd(){
     read -p "设置 Hysteria 2 密码（回车跳过为16位以上的随机字符）：" auth_pwd
     if [[ -z $auth_pwd ]]; then
+        # 生成至少16位的随机字母数字密码
         auth_pwd=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
         echo
     fi
@@ -288,6 +267,7 @@ insthysteria(){
     inst_pwd
     inst_site
 
+    # 设置 Hysteria 配置文件
     cat << EOF > /etc/hysteria/config.yaml
 listen: :$port
 
@@ -312,12 +292,14 @@ masquerade:
     rewriteHost: true
 EOF
 
+    # 确定最终入站端口范围
     if [[ -n $firstport ]]; then
         last_port="$port,$firstport-$endport"
     else
         last_port=$port
     fi
 
+    # 给 IPv6 地址加中括号
     if [[ -n $(echo $ip | grep ":") ]]; then
         last_ip="[$ip]"
     else
@@ -343,7 +325,7 @@ quic:
 fastOpen: true
 
 socks5:
-  listen: 127.0.0.1:7887
+  listen: 127.0.0.1:7887  # 修改此处端口号为您想要的端口，例如7887
 
 transport:
   udp:
@@ -365,7 +347,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"
+    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
   },
   "transport": {
     "udp": {
@@ -488,6 +470,7 @@ changeport(){
     sed -i "s/:$oldport$/:$port/g" /root/hy/hy-client.yaml
     sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
+    # 更新 iptables 规则
     iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
     ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
 
@@ -510,6 +493,7 @@ changepasswd(){
 
     read -p "设置 Hysteria 2 密码（回车跳过为随机字符）：" passwd
     if [[ -z $passwd ]]; then
+        # 生成至少16位的随机字母数字密码
         passwd=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
         echo
     fi
@@ -625,4 +609,3 @@ menu() {
 }
 
 menu
-
