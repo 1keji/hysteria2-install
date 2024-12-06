@@ -244,11 +244,6 @@ inst_port(){
 
     yellow "将在 Hysteria 2 节点使用的端口是：$port"
     inst_jump
-
-    # 开放主端口的防火墙规则
-    iptables -I INPUT -p udp --dport $port -j ACCEPT
-    ip6tables -I INPUT -p udp --dport $port -j ACCEPT
-    netfilter-persistent save >/dev/null 2>&1
 }
 
 inst_jump(){
@@ -270,14 +265,9 @@ inst_jump(){
                 fi
             done
         fi
-        # 使用 REDIRECT 实现端口跳跃
+        # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
         iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
         ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        netfilter-persistent save >/dev/null 2>&1
-
-        # 开放跳跃范围端口的防火墙规则
-        iptables -I INPUT -p udp --dport $firstport:$endport -j ACCEPT
-        ip6tables -I INPUT -p udp --dport $firstport:$endport -j ACCEPT
         netfilter-persistent save >/dev/null 2>&1
     else
         red "将继续使用单端口模式"
@@ -318,9 +308,7 @@ insthysteria(){
     fi
     ${PACKAGE_INSTALL[int]} curl wget sudo qrencode procps iptables-persistent netfilter-persistent
 
-    # 下载并使用修正后的 install_server.sh
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh -O install_server.sh
-    chmod +x install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
     rm -f install_server.sh
 
@@ -362,13 +350,19 @@ masquerade:
     rewriteHost: true
 EOF
 
-    # 确定最终入站端口范围，仅记录主端口
-    last_port="$port"
+    # 确定最终入站端口范围
+    if [[ -n $firstport ]]; then
+        last_port="$port,$firstport-$endport"
+    else
+        last_port=$port
+    fi
 
-    # 将 last_ip 设置为域名
-    last_ip="$hy_domain"
-
-    # 开放主端口的防火墙规则已在 inst_port 和 inst_jump 中设置
+    # 给 IPv6 地址加中括号
+    if [[ -n $(echo $ip | grep ":") ]]; then
+        last_ip="[$ip]"
+    else
+        last_ip=$ip
+    fi
 
     mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
@@ -378,7 +372,7 @@ auth: $auth_pwd
 
 tls:
   sni: $hy_domain
-  insecure: false
+  insecure: true
 
 quic:
   initStreamReceiveWindow: 16777216
@@ -389,20 +383,19 @@ quic:
 fastOpen: true
 
 socks5:
-  listen: 127.0.0.1:7887
+  listen: 127.0.0.1:7887  # 修改此处端口号为您想要的端口，例如7887
 
 transport:
   udp:
     hopInterval: 30s 
 EOF
-
     cat << EOF > /root/hy/hy-client.json
 {
   "server": "$last_ip:$last_port",
   "auth": "$auth_pwd",
   "tls": {
     "sni": "$hy_domain",
-    "insecure": false
+    "insecure": true
   },
   "quic": {
     "initStreamReceiveWindow": 16777216,
@@ -412,7 +405,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"
+    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
   },
   "transport": {
     "udp": {
@@ -421,7 +414,6 @@ EOF
   }
 }
 EOF
-
     cat <<EOF > /root/hy/clash-meta.yaml
 mixed-port: 7890
 external-controller: 127.0.0.1:9090
@@ -455,7 +447,6 @@ rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-
     url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
     echo $url > /root/hy/url.txt
     nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
@@ -549,9 +540,6 @@ changeport(){
         ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
     fi
 
-    # 开放新端口的防火墙规则
-    iptables -I INPUT -p udp --dport $port -j ACCEPT
-    ip6tables -I INPUT -p udp --dport $port -j ACCEPT
     netfilter-persistent save >/dev/null 2>&1
 
     stophysteria && starthysteria
@@ -643,10 +631,9 @@ showconf(){
 }
 
 update_core(){
-    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh -O install_server.sh
-    chmod +x install_server.sh
+    wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
-
+    
     rm -f install_server.sh
 }
 
