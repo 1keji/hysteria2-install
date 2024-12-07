@@ -60,9 +60,9 @@ inst_cert(){
     echo ""
     read -rp "请输入选项 [1-2]: " certInput
     if [[ $certInput == 2 ]]; then
-        # 定义常见的证书存储路径，包括根目录下的 tls 文件夹
+        # 定义常见的证书存储路径，包括根目录下的 tls 子目录
         CERT_PATHS=(
-            "/tls/"                      # 新添加的路径
+            "/tls/*/"                      # 新添加的路径，匹配 /tls/下的所有子目录
             "/etc/ssl/certs/"
             "/etc/pki/tls/certs/"
             "/etc/letsencrypt/live/"
@@ -75,15 +75,19 @@ inst_cert(){
 
         # 搜索匹配的证书和密钥文件对
         for path in "${CERT_PATHS[@]}"; do
-            if [[ -d $path ]]; then
-                for crt in "$path"*.crt; do
-                    key="${crt%.crt}.key"
-                    if [[ -f $key ]]; then
-                        cert_pairs["$index,$path"]="$(basename "$crt"),$(basename "$key")"
-                        index=$((index + 1))
-                    fi
-                done
-            fi
+            # 使用 glob 扩展匹配子目录
+            for p in $path; do
+                if [[ -d $p ]]; then
+                    for crt in "$p"*.crt; do
+                        # 检查是否有匹配的 .key 文件
+                        key="${crt%.crt}.key"
+                        if [[ -f $key ]]; then
+                            cert_pairs["$index,$p"]="$(basename "$crt"),$(basename "$key")"
+                            index=$((index + 1))
+                        fi
+                    done
+                fi
+            done
         done
 
         if [[ ${#cert_pairs[@]} -eq 0 ]]; then
@@ -272,7 +276,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir /root/hy
+    mkdir -p /root/hy
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -480,9 +484,9 @@ change_cert(){
     old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
     old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
-    green "搜索常见的 TLS 证书路径，包括根目录下的 tls 文件夹..."
+    green "搜索常见的 TLS 证书路径，包括根目录下的 tls 子目录..."
     CERT_PATHS=(
-        "/tls/"                      # 新添加的路径
+        "/tls/*/"                      # 新添加的路径，匹配 /tls/下的所有子目录
         "/etc/ssl/certs/"
         "/etc/pki/tls/certs/"
         "/etc/letsencrypt/live/"
@@ -495,15 +499,18 @@ change_cert(){
 
     # 搜索匹配的证书和密钥文件对
     for path in "${CERT_PATHS[@]}"; do
-        if [[ -d $path ]]; then
-            for crt in "$path"*.crt; do
-                key="${crt%.crt}.key"
-                if [[ -f $key ]]; then
-                    cert_pairs["$index,$path"]="$(basename "$crt"),$(basename "$key")"
-                    index=$((index + 1))
-                fi
-            done
-        fi
+        # 使用 glob 扩展匹配子目录
+        for p in $path; do
+            if [[ -d $p ]]; then
+                for crt in "$p"*.crt; do
+                    key="${crt%.crt}.key"
+                    if [[ -f $key ]]; then
+                        cert_pairs["$index,$p"]="$(basename "$crt"),$(basename "$key")"
+                        index=$((index + 1))
+                    fi
+                done
+            fi
+        done
     done
 
     if [[ ${#cert_pairs[@]} -eq 0 ]]; then
