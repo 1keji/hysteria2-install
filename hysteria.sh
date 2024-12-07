@@ -27,8 +27,10 @@ PACKAGE_INSTALL=("apt -y install" "apt -y install" "yum -y install" "yum -y inst
 PACKAGE_REMOVE=("apt -y remove" "apt -y remove" "yum -y remove" "yum -y remove" "yum -y remove")
 PACKAGE_UNINSTALL=("apt -y autoremove" "apt -y autoremove" "yum -y autoremove" "yum -y autoremove" "yum -y autoremove")
 
+# 检查是否以root用户运行
 [[ $EUID -ne 0 ]] && red "注意: 请在root用户下运行脚本" && exit 1
 
+# 获取操作系统信息
 CMD=("$(grep -i pretty_name /etc/os-release 2>/dev/null | cut -d \" -f2)" "$(hostnamectl 2>/dev/null | grep -i system | cut -d : -f2)" "$(lsb_release -sd 2>/dev/null)" "$(grep -i description /etc/lsb-release 2>/dev/null | cut -d \" -f2)" "$(grep . /etc/redhat-release 2>/dev/null)" "$(grep . /etc/issue 2>/dev/null | cut -d \\ -f1 | sed '/^[ ]*$/d')")
 
 for i in "${CMD[@]}"; do
@@ -39,8 +41,10 @@ for ((int = 0; int < ${#REGEX[@]}; int++)); do
     [[ $(echo "$SYS" | tr '[:upper:]' '[:lower:]') =~ ${REGEX[int]} ]] && SYSTEM="${RELEASE[int]}" && [[ -n $SYSTEM ]] && break
 done
 
+# 如果未识别到操作系统，退出脚本
 [[ -z $SYSTEM ]] && red "目前暂不支持你的VPS的操作系统！" && exit 1
 
+# 检查curl是否安装，如果未安装则安装
 if [[ -z $(type -P curl) ]]; then
     if [[ ! $SYSTEM == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
@@ -48,17 +52,20 @@ if [[ -z $(type -P curl) ]]; then
     ${PACKAGE_INSTALL[int]} curl
 fi
 
+# 获取服务器的公网IP
 realip(){
     ip=$(curl -s4m8 ip.gs -k) || ip=$(curl -s6m8 ip.gs -k)
 }
 
+# 证书安装函数
 inst_cert(){
     green "Hysteria 2 协议证书安装方式如下："
     echo ""
     echo -e " ${GREEN}1.${PLAIN} 自签证书 ${YELLOW}（默认）${PLAIN}"
     echo -e " ${GREEN}2.${PLAIN} 使用现有证书"
+    echo -e " ${GREEN}3.${PLAIN} 手动输入证书路径"
     echo ""
-    read -rp "请输入选项 [1-2]: " certInput
+    read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
         # 定义常见的证书存储路径，包括根目录下的 tls 子目录
         CERT_PATHS=(
@@ -80,12 +87,14 @@ inst_cert(){
                 if [[ -d $p ]]; then
                     # 查找 fullchain.pem 和 privkey.pem
                     if [[ -f "${p}fullchain.pem" && -f "${p}privkey.pem" ]]; then
-                        cert_pairs["$index,$p"]="fullchain.pem,privkey.pem"
+                        domain=$(basename "$p")
+                        cert_pairs["$index,$p"]="fullchain.pem,privkey.pem,$domain"
                         index=$((index + 1))
                     fi
                     # 也可以添加对 cert.pem 和 privkey.pem 的支持
                     if [[ -f "${p}cert.pem" && -f "${p}privkey.pem" ]]; then
-                        cert_pairs["$index,$p"]="cert.pem,privkey.pem"
+                        domain=$(basename "$p")
+                        cert_pairs["$index,$p"]="cert.pem,privkey.pem,$domain"
                         index=$((index + 1))
                     fi
                 fi
@@ -99,9 +108,9 @@ inst_cert(){
 
         green "找到以下证书和密钥文件对："
         for key in "${!cert_pairs[@]}"; do
-            IFS=',' read -r num pair <<< "${cert_pairs[$key]}"
-            IFS=',' read -r crt_file key_file <<< "$pair"
-            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $(echo $key | cut -d',' -f2)"
+            IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
+            IFS=',' read -r crt_file key_file _ <<< "$pair"
+            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $p"
         done
 
         while true; do
@@ -112,9 +121,9 @@ inst_cert(){
                 selected_crt=$(echo "$selected_pair" | cut -d',' -f1)
                 selected_key_file=$(echo "$selected_pair" | cut -d',' -f2)
                 selected_path=$(echo "$selected_key" | cut -d',' -f2)
-                cert_path="$selected_path$selected_crt"
-                key_path="$selected_path$selected_key_file"
-                domain=$(echo "$selected_crt" | sed 's/\(.*\)\.pem/\1/')
+                domain=$(echo "$selected_pair" | cut -d',' -f3)
+                cert_path="${selected_path}${selected_crt}"
+                key_path="${selected_path}${selected_key_file}"
                 hy_domain=$domain
                 break
             else
@@ -126,6 +135,25 @@ inst_cert(){
         yellow "公钥文件 fullchain.pem/cert.pem 的路径：$cert_path"
         yellow "密钥文件 privkey.pem 的路径：$key_path"
         yellow "证书域名：$domain"
+
+        chmod +rw "$cert_path"
+        chmod +rw "$key_path"
+    elif [[ $certInput == 3 ]]; then
+        read -rp "请输入证书文件的绝对路径 (例如 /tls/pxii.566333.xyz/fullchain.pem): " cert_path
+        read -rp "请输入密钥文件的绝对路径 (例如 /tls/pxii.566333.xyz/privkey.pem): " key_path
+        read -rp "请输入证书域名: " domain
+        hy_domain=$domain
+
+        green "已输入的证书路径："
+        yellow "公钥文件 cert 的路径：$cert_path"
+        yellow "密钥文件 key 的路径：$key_path"
+        yellow "证书域名：$domain"
+
+        # 验证文件是否存在
+        if [[ ! -f "$cert_path" || ! -f "$key_path" ]]; then
+            red "证书文件或密钥文件不存在，请检查路径并重试。"
+            exit 1
+        fi
 
         chmod +rw "$cert_path"
         chmod +rw "$key_path"
@@ -143,6 +171,7 @@ inst_cert(){
     fi
 }
 
+# 设置 Hysteria 2 端口
 inst_port(){
     iptables -t nat -F PREROUTING >/dev/null 2>&1
 
@@ -160,6 +189,7 @@ inst_port(){
     inst_jump
 }
 
+# 设置端口使用模式
 inst_jump(){
     green "Hysteria 2 端口使用模式如下："
     echo ""
@@ -188,6 +218,7 @@ inst_jump(){
     fi
 }
 
+# 设置 Hysteria 2 密码
 inst_pwd(){
     read -p "设置 Hysteria 2 密码（回车跳过为16位以上的随机字符）：" auth_pwd
     if [[ -z $auth_pwd ]]; then
@@ -198,12 +229,14 @@ inst_pwd(){
     yellow "使用在 Hysteria 2 节点的密码为：$auth_pwd"
 }
 
+# 设置 Hysteria 2 伪装网站
 inst_site(){
     read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车maimai.sega.jp]：" proxysite
     [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
     yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
 }
 
+# 安装 Hysteria 2
 insthysteria(){
     warpv6=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
     warpv4=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
@@ -387,6 +420,7 @@ EOF
     red "$(cat /root/hy/url-nohop.txt)"
 }
 
+# 卸载 Hysteria 2
 unsthysteria(){
     systemctl stop hysteria-server.service >/dev/null 2>&1
     systemctl disable hysteria-server.service >/dev/null 2>&1
@@ -398,16 +432,19 @@ unsthysteria(){
     green "Hysteria 2 已彻底卸载完成！"
 }
 
+# 启动 Hysteria 2
 starthysteria(){
     systemctl start hysteria-server
     systemctl enable hysteria-server >/dev/null 2>&1
 }
 
+# 关闭 Hysteria 2
 stophysteria(){
     systemctl stop hysteria-server
     systemctl disable hysteria-server >/dev/null 2>&1
 }
 
+# 重启 Hysteria 2
 hysteriaswitch(){
     yellow "请选择你需要的操作："
     echo ""
@@ -415,7 +452,7 @@ hysteriaswitch(){
     echo -e " ${GREEN}2.${PLAIN} 关闭 Hysteria 2"
     echo -e " ${GREEN}3.${PLAIN} 重启 Hysteria 2"
     echo ""
-    read -rp "请输入选项 [0-3]: " switchInput
+    read -rp "请输入选项 [1-3]: " switchInput
     case $switchInput in
         1 ) starthysteria ;;
         2 ) stophysteria ;;
@@ -424,6 +461,7 @@ hysteriaswitch(){
     esac
 }
 
+# 修改 Hysteria 2 端口
 changeport(){
     oldport=$(grep '^listen:' /etc/hysteria/config.yaml | awk '{print $2}' | awk -F ":" '{print $2}')
 
@@ -460,6 +498,7 @@ changeport(){
     showconf
 }
 
+# 修改 Hysteria 2 密码
 changepasswd(){
     oldpasswd=$(grep '^password:' /etc/hysteria/config.yaml | awk '{print $2}')
 
@@ -481,6 +520,7 @@ changepasswd(){
     showconf
 }
 
+# 修改 Hysteria 2 证书
 change_cert(){
     old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
     old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
@@ -506,12 +546,14 @@ change_cert(){
             if [[ -d $p ]]; then
                 # 查找 fullchain.pem 和 privkey.pem
                 if [[ -f "${p}fullchain.pem" && -f "${p}privkey.pem" ]]; then
-                    cert_pairs["$index,$p"]="fullchain.pem,privkey.pem"
+                    domain=$(basename "$p")
+                    cert_pairs["$index,$p"]="fullchain.pem,privkey.pem,$domain"
                     index=$((index + 1))
                 fi
                 # 也可以添加对 cert.pem 和 privkey.pem 的支持
                 if [[ -f "${p}cert.pem" && -f "${p}privkey.pem" ]]; then
-                    cert_pairs["$index,$p"]="cert.pem,privkey.pem"
+                    domain=$(basename "$p")
+                    cert_pairs["$index,$p"]="cert.pem,privkey.pem,$domain"
                     index=$((index + 1))
                 fi
             fi
@@ -525,9 +567,9 @@ change_cert(){
 
     green "找到以下证书和密钥文件对："
     for key in "${!cert_pairs[@]}"; do
-        IFS=',' read -r num pair <<< "${cert_pairs[$key]}"
-        IFS=',' read -r crt_file key_file <<< "$pair"
-        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $(echo $key | cut -d',' -f2)"
+        IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
+        IFS=',' read -r crt_file key_file _ <<< "$pair"
+        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $p"
     done
 
     while true; do
@@ -538,9 +580,10 @@ change_cert(){
             selected_crt=$(echo "$selected_pair" | cut -d',' -f1)
             selected_key_file=$(echo "$selected_pair" | cut -d',' -f2)
             selected_path=$(echo "$selected_key" | cut -d',' -f2)
-            new_cert_path="$selected_path$selected_crt"
-            new_key_path="$selected_path$selected_key_file"
-            new_domain=$(echo "$selected_crt" | sed 's/\(.*\)\.pem/\1/')
+            domain=$(echo "$selected_pair" | cut -d',' -f3)
+            new_cert_path="${selected_path}${selected_crt}"
+            new_key_path="${selected_path}${selected_key_file}"
+            new_domain=$domain
             break
         else
             red "无效的选择，请重新输入。"
@@ -566,6 +609,7 @@ change_cert(){
     showconf
 }
 
+# 修改 Hysteria 2 伪装网站
 changeproxysite(){
     oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
 
@@ -578,6 +622,7 @@ changeproxysite(){
     green "Hysteria 2 节点伪装网站已成功修改为：$proxysite"
 }
 
+# 修改 Hysteria 2 配置
 changeconf(){
     green "Hysteria 2 配置变更选择如下:"
     echo -e " ${GREEN}1.${PLAIN} 修改端口"
@@ -595,6 +640,7 @@ changeconf(){
     esac
 }
 
+# 显示 Hysteria 2 配置
 showconf(){
     yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
     red "$(cat /root/hy/hy-client.yaml)"
@@ -607,6 +653,7 @@ showconf(){
     red "$(cat /root/hy/url-nohop.txt)"
 }
 
+# 更新 Hysteria 2 内核
 update_core(){
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
@@ -614,6 +661,7 @@ update_core(){
     rm -f install_server.sh
 }
 
+# 菜单函数
 menu() {
     clear
     echo "##############################################################"
@@ -646,4 +694,5 @@ menu() {
     esac
 }
 
+# 运行菜单
 menu
