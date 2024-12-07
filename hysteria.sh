@@ -67,13 +67,13 @@ inst_cert(){
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
-        # 定义常见的证书存储路径，包括根目录下的 tls 子目录
+        # 定义常见的证书存储路径，包括 Let's Encrypt 和 Nginx 的证书目录
         CERT_PATHS=(
-            "/root/tls/*/"                      # 优先搜索 /root/tls/下的所有子目录（Nginx 申请的证书）
-            "/etc/nginx/ssl/*/"                  # 常见的 Nginx 证书目录（根据实际情况调整）
+            "/etc/letsencrypt/live/*/"          # Let's Encrypt 证书
+            "/etc/nginx/ssl/*/"                  # Nginx 证书目录（根据实际情况调整）
+            "/root/tls/*/"                       # 自定义证书目录
             "/etc/ssl/certs/"
             "/etc/pki/tls/certs/"
-            "/etc/letsencrypt/live/"
             "/usr/local/share/ca-certificates/"
             "/etc/hysteria/certs/"
         )
@@ -111,8 +111,8 @@ inst_cert(){
         for key in "${!cert_pairs[@]}"; do
             IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
             IFS=',' read -r crt_file key_file _ <<< "$pair"
-            cert_path="${key//,*/}" # 获取路径部分
-            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $p"
+            selected_path=$(echo "$key" | cut -d',' -f2)
+            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $selected_path"
         done
 
         while true; do
@@ -141,8 +141,8 @@ inst_cert(){
         chmod +rw "$cert_path"
         chmod +rw "$key_path"
     elif [[ $certInput == 3 ]]; then
-        read -rp "请输入证书文件的绝对路径 (例如 /root/tls/pxii.566333.xyz/fullchain.pem): " cert_path
-        read -rp "请输入密钥文件的绝对路径 (例如 /root/tls/pxii.566333.xyz/privkey.pem): " key_path
+        read -rp "请输入证书文件的绝对路径 (例如 /etc/letsencrypt/live/gz.566333.xyz/fullchain.pem): " cert_path
+        read -rp "请输入密钥文件的绝对路径 (例如 /etc/letsencrypt/live/gz.566333.xyz/privkey.pem): " key_path
         read -rp "请输入证书域名: " domain
         hy_domain=$domain
 
@@ -233,24 +233,14 @@ inst_pwd(){
 
 # 设置 Hysteria 2 伪装网站
 inst_site(){
-    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [回车maimai.sega.jp]：" proxysite
+    read -rp "请输入 Hysteria 2 的伪装网站地址 （去除https://） [maimai.sega.jp]：" proxysite
     [[ -z $proxysite ]] && proxysite="maimai.sega.jp"
     yellow "使用在 Hysteria 2 节点的伪装网站为：$proxysite"
 }
 
 # 安装 Hysteria 2
 insthysteria(){
-    warpv6=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-    warpv4=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-    if [[ $warpv4 =~ on|plus || $warpv6 =~ on|plus ]]; then
-        wg-quick down wgcf >/dev/null 2>&1
-        systemctl stop warp-go >/dev/null 2>&1
-        realip
-        systemctl start warp-go >/dev/null 2>&1
-        wg-quick up wgcf >/dev/null 2>&1
-    else
-        realip
-    fi
+    realip
 
     if [[ ! ${SYSTEM} == "CentOS" ]]; then
         ${PACKAGE_UPDATE[int]}
@@ -300,7 +290,7 @@ masquerade:
 EOF
 
     # 确定最终入站端口范围
-    if [[ -n $firstport ]]; then
+    if [[ -n $firstport && -n $endport ]]; then
         last_port="$port,$firstport-$endport"
     else
         last_port=$port
@@ -338,6 +328,7 @@ transport:
   udp:
     hopInterval: 30s 
 EOF
+
     cat << EOF > /root/hy/hy-client.json
 {
   "server": "$last_ip:$last_port",
@@ -363,6 +354,7 @@ EOF
   }
 }
 EOF
+
     cat <<EOF > /root/hy/clash-meta.yaml
 mixed-port: 7890
 external-controller: 127.0.0.1:9090
@@ -379,7 +371,7 @@ dns:
     - 1.1.1.1
     - 114.114.114.114
 proxies:
-  - name: 1keji-Hysteria2
+  - name: Hysteria2
     type: hysteria2
     server: $last_ip
     port: $port
@@ -390,15 +382,16 @@ proxy-groups:
   - name: Proxy
     type: select
     proxies:
-      - 1keji-Hysteria2
+      - Hysteria2
           
 rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
-    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+
+    url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#Hysteria2"
     echo "$url" > /root/hy/url.txt
-    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
+    nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#Hysteria2"
     echo "$nohopurl" > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
@@ -411,14 +404,14 @@ EOF
     fi
     red "======================================================================================"
     green "Hysteria 2 代理服务安装完成"
-    yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
+    yellow "Hysteria 2 客户端 YAML 配置文件已保存到 /root/hy/hy-client.yaml，内容如下："
     red "$(cat /root/hy/hy-client.yaml)"
-    yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
+    yellow "Hysteria 2 客户端 JSON 配置文件已保存到 /root/hy/hy-client.json，内容如下："
     red "$(cat /root/hy/hy-client.json)"
     yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
-    yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
+    yellow "Hysteria 2 节点分享链接已保存到 /root/hy/url.txt"
     red "$(cat /root/hy/url.txt)"
-    yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
+    yellow "Hysteria 2 节点单端口的分享链接已保存到 /root/hy/url-nohop.txt"
     red "$(cat /root/hy/url-nohop.txt)"
 }
 
@@ -429,6 +422,7 @@ unsthysteria(){
     rm -f /lib/systemd/system/hysteria-server.service /lib/systemd/system/hysteria-server@.service
     rm -rf /usr/local/bin/hysteria /etc/hysteria /root/hy /root/hysteria.sh
     iptables -t nat -F PREROUTING >/dev/null 2>&1
+    ip6tables -t nat -F PREROUTING >/dev/null 2>&1
     netfilter-persistent save >/dev/null 2>&1
 
     green "Hysteria 2 已彻底卸载完成！"
@@ -483,10 +477,12 @@ changeport(){
     sed -i "s/\"$oldport\"/\"$port\"/g" /root/hy/hy-client.json
 
     # 更新 iptables 规则
-    iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
-    ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    if [[ -n $firstport && -n $endport ]]; then
+        iptables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+        ip6tables -t nat -D PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $oldport >/dev/null 2>&1
+    fi
 
-    if [[ -n $firstport ]]; then
+    if [[ -n $firstport && -n $endport ]]; then
         iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
         ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
     fi
@@ -528,13 +524,13 @@ change_cert(){
     old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
     old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
-    green "搜索常见的 TLS 证书路径，包括 /root/tls/ 下的 tls 子目录..."
+    green "搜索常见的 TLS 证书路径，包括 Let's Encrypt 和 Nginx 的证书目录..."
     CERT_PATHS=(
-        "/root/tls/*/"                      # 优先搜索 /root/tls/下的所有子目录（Nginx 申请的证书）
-        "/etc/nginx/ssl/*/"                  # 常见的 Nginx 证书目录（根据实际情况调整）
+        "/etc/letsencrypt/live/*/"          # Let's Encrypt 证书
+        "/etc/nginx/ssl/*/"                  # Nginx 证书目录（根据实际情况调整）
+        "/root/tls/*/"                       # 自定义证书目录
         "/etc/ssl/certs/"
         "/etc/pki/tls/certs/"
-        "/etc/letsencrypt/live/"
         "/usr/local/share/ca-certificates/"
         "/etc/hysteria/certs/"
     )
@@ -615,7 +611,7 @@ change_cert(){
 
 # 修改 Hysteria 2 伪装网站
 changeproxysite(){
-    oldproxysite=$(grep '^proxy:' /etc/hysteria/config.yaml | grep 'url:' | awk -F "https://" '{print $2}' | awk '{print $1}')
+    oldproxysite=$(grep '^masquerade:' /etc/hysteria/config.yaml | grep 'url:' | awk -F "https://" '{print $2}' | awk '{print $1}')
 
     inst_site
 
@@ -646,14 +642,14 @@ changeconf(){
 
 # 显示 Hysteria 2 配置
 showconf(){
-    yellow "Hysteria 2 客户端 YAML 配置文件 hy-client.yaml 内容如下，并保存到 /root/hy/hy-client.yaml"
+    yellow "Hysteria 2 客户端 YAML 配置文件已保存到 /root/hy/hy-client.yaml，内容如下："
     red "$(cat /root/hy/hy-client.yaml)"
-    yellow "Hysteria 2 客户端 JSON 配置文件 hy-client.json 内容如下，并保存到 /root/hy/hy-client.json"
+    yellow "Hysteria 2 客户端 JSON 配置文件已保存到 /root/hy/hy-client.json，内容如下："
     red "$(cat /root/hy/hy-client.json)"
     yellow "Clash Meta 客户端配置文件已保存到 /root/hy/clash-meta.yaml"
-    yellow "Hysteria 2 节点分享链接如下，并保存到 /root/hy/url.txt"
+    yellow "Hysteria 2 节点分享链接已保存到 /root/hy/url.txt"
     red "$(cat /root/hy/url.txt)"
-    yellow "Hysteria 2 节点单端口的分享链接如下，并保存到 /root/hy/url-nohop.txt"
+    yellow "Hysteria 2 节点单端口的分享链接已保存到 /root/hy/url-nohop.txt"
     red "$(cat /root/hy/url-nohop.txt)"
 }
 
