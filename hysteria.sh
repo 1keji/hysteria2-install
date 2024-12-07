@@ -60,8 +60,9 @@ inst_cert(){
     echo ""
     read -rp "请输入选项 [1-2]: " certInput
     if [[ $certInput == 2 ]]; then
-        # 定义常见的证书存储路径
+        # 定义常见的证书存储路径，包括根目录下的 tls 文件夹
         CERT_PATHS=(
+            "/tls/"                      # 新添加的路径
             "/etc/ssl/certs/"
             "/etc/pki/tls/certs/"
             "/etc/letsencrypt/live/"
@@ -479,8 +480,9 @@ change_cert(){
     old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
     old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
-    green "搜索常见的 TLS 证书路径..."
+    green "搜索常见的 TLS 证书路径，包括根目录下的 tls 文件夹..."
     CERT_PATHS=(
+        "/tls/"                      # 新添加的路径
         "/etc/ssl/certs/"
         "/etc/pki/tls/certs/"
         "/etc/letsencrypt/live/"
