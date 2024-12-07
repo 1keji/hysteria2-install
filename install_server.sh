@@ -749,25 +749,6 @@ restart_running_services() {
   done
 }
 
-stophysteria(){
-    systemctl stop hysteria-server
-    systemctl disable hysteria-server >/dev/null 2>&1
-}
-
-remove_running_services(){
-    if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
-        return
-    fi
-
-    echo "Stopping running service ... "
-
-    for service in $(get_running_services); do
-        echo -ne "Stopping $service ... "
-        systemctl stop "$service"
-        echo "done"
-    done
-}
-
 stop_running_services() {
   if [[ "x$FORCE_NO_SYSTEMD" == "x2" ]]; then
     return
