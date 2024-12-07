@@ -69,7 +69,7 @@ inst_cert(){
     if [[ $certInput == 2 ]]; then
         # 定义常见的证书存储路径，包括根目录下的 tls 子目录
         CERT_PATHS=(
-            "/tls/*/"                      # 新添加的路径，匹配 /tls/下的所有子目录
+            "/root/tls/*/"                      # 修正后的路径，匹配 /root/tls/下的所有子目录
             "/etc/ssl/certs/"
             "/etc/pki/tls/certs/"
             "/etc/letsencrypt/live/"
@@ -139,8 +139,8 @@ inst_cert(){
         chmod +rw "$cert_path"
         chmod +rw "$key_path"
     elif [[ $certInput == 3 ]]; then
-        read -rp "请输入证书文件的绝对路径 (例如 /tls/pxii.566333.xyz/fullchain.pem): " cert_path
-        read -rp "请输入密钥文件的绝对路径 (例如 /tls/pxii.566333.xyz/privkey.pem): " key_path
+        read -rp "请输入证书文件的绝对路径 (例如 /root/tls/pxii.566333.xyz/fullchain.pem): " cert_path
+        read -rp "请输入密钥文件的绝对路径 (例如 /root/tls/pxii.566333.xyz/privkey.pem): " key_path
         read -rp "请输入证书域名: " domain
         hy_domain=$domain
 
@@ -528,7 +528,7 @@ change_cert(){
 
     green "搜索常见的 TLS 证书路径，包括根目录下的 tls 子目录..."
     CERT_PATHS=(
-        "/tls/*/"                      # 新添加的路径，匹配 /tls/下的所有子目录
+        "/root/tls/*/"                      # 修正后的路径，匹配 /root/tls/下的所有子目录
         "/etc/ssl/certs/"
         "/etc/pki/tls/certs/"
         "/etc/letsencrypt/live/"
@@ -611,7 +611,7 @@ change_cert(){
 
 # 修改 Hysteria 2 伪装网站
 changeproxysite(){
-    oldproxysite=$(grep '^url:' /etc/hysteria/config.yaml | awk -F "https://" '{print $2}')
+    oldproxysite=$(grep '^masquerade:' /etc/hysteria/config.yaml | awk -F "url: https://" '{print $2}' | awk '{print $1}')
 
     inst_site
 
@@ -690,6 +690,7 @@ menu() {
         4 ) changeconf ;;
         5 ) showconf ;;
         6 ) update_core ;;
+        0 ) exit 0 ;;
         * ) exit 1 ;;
     esac
 }
