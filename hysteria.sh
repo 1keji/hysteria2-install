@@ -69,7 +69,8 @@ inst_cert(){
     if [[ $certInput == 2 ]]; then
         # 定义常见的证书存储路径，包括根目录下的 tls 子目录
         CERT_PATHS=(
-            "/root/tls/*/"                      # 修正后的路径，匹配 /root/tls/下的所有子目录
+            "/root/tls/*/"                      # 优先搜索 /root/tls/下的所有子目录（Nginx 申请的证书）
+            "/etc/nginx/ssl/*/"                  # 常见的 Nginx 证书目录（根据实际情况调整）
             "/etc/ssl/certs/"
             "/etc/pki/tls/certs/"
             "/etc/letsencrypt/live/"
@@ -110,6 +111,7 @@ inst_cert(){
         for key in "${!cert_pairs[@]}"; do
             IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
             IFS=',' read -r crt_file key_file _ <<< "$pair"
+            cert_path="${key//,*/}" # 获取路径部分
             echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $p"
         done
 
@@ -526,9 +528,10 @@ change_cert(){
     old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
     old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
-    green "搜索常见的 TLS 证书路径，包括根目录下的 tls 子目录..."
+    green "搜索常见的 TLS 证书路径，包括 /root/tls/ 下的 tls 子目录..."
     CERT_PATHS=(
-        "/root/tls/*/"                      # 修正后的路径，匹配 /root/tls/下的所有子目录
+        "/root/tls/*/"                      # 优先搜索 /root/tls/下的所有子目录（Nginx 申请的证书）
+        "/etc/nginx/ssl/*/"                  # 常见的 Nginx 证书目录（根据实际情况调整）
         "/etc/ssl/certs/"
         "/etc/pki/tls/certs/"
         "/etc/letsencrypt/live/"
@@ -569,7 +572,8 @@ change_cert(){
     for key in "${!cert_pairs[@]}"; do
         IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
         IFS=',' read -r crt_file key_file _ <<< "$pair"
-        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $p"
+        selected_path=$(echo "$key" | cut -d',' -f2)
+        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $selected_path"
     done
 
     while true; do
@@ -611,7 +615,7 @@ change_cert(){
 
 # 修改 Hysteria 2 伪装网站
 changeproxysite(){
-    oldproxysite=$(grep '^masquerade:' /etc/hysteria/config.yaml | awk -F "url: https://" '{print $2}' | awk '{print $1}')
+    oldproxysite=$(grep '^proxy:' /etc/hysteria/config.yaml | grep 'url:' | awk -F "https://" '{print $2}' | awk '{print $1}')
 
     inst_site
 
