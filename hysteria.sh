@@ -109,24 +109,21 @@ inst_cert(){
 
         green "找到以下证书和密钥文件对："
         for key in "${!cert_pairs[@]}"; do
-            IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
-            IFS=',' read -r crt_file key_file _ <<< "$pair"
-            selected_path=$(echo "$key" | cut -d',' -f2)
-            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $selected_path"
+            IFS=',' read -r num path <<< "$key"
+            IFS=',' read -r crt_file key_file domain <<< "${cert_pairs[$key]}"
+            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $path"
         done
 
         while true; do
             read -rp "请输入要使用的证书编号: " selected
             selected_key=$(echo "${!cert_pairs[@]}" | tr ' ' '\n' | grep "^$selected,")
             if [[ -n $selected_key ]]; then
+                IFS=',' read -r selected_num selected_path <<< "$selected_key"
                 selected_pair=${cert_pairs[$selected_key]}
-                selected_crt=$(echo "$selected_pair" | cut -d',' -f1)
-                selected_key_file=$(echo "$selected_pair" | cut -d',' -f2)
-                selected_path=$(echo "$selected_key" | cut -d',' -f2)
-                domain=$(echo "$selected_pair" | cut -d',' -f3)
+                IFS=',' read -r selected_crt selected_key_file selected_domain <<< "$selected_pair"
                 cert_path="${selected_path}${selected_crt}"
                 key_path="${selected_path}${selected_key_file}"
-                hy_domain=$domain
+                hy_domain=$selected_domain
                 break
             else
                 red "无效的选择，请重新输入。"
@@ -134,9 +131,9 @@ inst_cert(){
         done
 
         green "已选择的证书路径："
-        yellow "公钥文件 fullchain.pem/cert.pem 的路径：$cert_path"
-        yellow "密钥文件 privkey.pem 的路径：$key_path"
-        yellow "证书域名：$domain"
+        yellow "公钥文件: $cert_path"
+        yellow "密钥文件: $key_path"
+        yellow "证书域名: $hy_domain"
 
         chmod +rw "$cert_path"
         chmod +rw "$key_path"
@@ -383,7 +380,7 @@ proxy-groups:
     type: select
     proxies:
       - Hysteria2
-          
+
 rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
@@ -520,8 +517,8 @@ changepasswd(){
 
 # 修改 Hysteria 2 证书
 change_cert(){
-    old_cert=$(grep '^cert:' /etc/hysteria/config.yaml | awk '{print $2}')
-    old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
+    old_cert=$(grep '^tls:' /etc/hysteria/config.yaml -A2 | grep '^  cert:' | awk '{print $2}')
+    old_key=$(grep '^tls:' /etc/hysteria/config.yaml -A2 | grep '^  key:' | awk '{print $2}')
     old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
     green "搜索常见的 TLS 证书路径，包括 Let's Encrypt 和 Nginx 的证书目录..."
@@ -566,24 +563,21 @@ change_cert(){
 
     green "找到以下证书和密钥文件对："
     for key in "${!cert_pairs[@]}"; do
-        IFS=',' read -r num pair domain <<< "${cert_pairs[$key]}"
-        IFS=',' read -r crt_file key_file _ <<< "$pair"
-        selected_path=$(echo "$key" | cut -d',' -f2)
-        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $selected_path"
+        IFS=',' read -r num path <<< "$key"
+        IFS=',' read -r crt_file key_file domain <<< "${cert_pairs[$key]}"
+        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $path"
     done
 
     while true; do
         read -rp "请输入要使用的证书编号: " selected
         selected_key=$(echo "${!cert_pairs[@]}" | tr ' ' '\n' | grep "^$selected,")
         if [[ -n $selected_key ]]; then
+            IFS=',' read -r selected_num selected_path <<< "$selected_key"
             selected_pair=${cert_pairs[$selected_key]}
-            selected_crt=$(echo "$selected_pair" | cut -d',' -f1)
-            selected_key_file=$(echo "$selected_pair" | cut -d',' -f2)
-            selected_path=$(echo "$selected_key" | cut -d',' -f2)
-            domain=$(echo "$selected_pair" | cut -d',' -f3)
+            IFS=',' read -r selected_crt selected_key_file selected_domain <<< "$selected_pair"
             new_cert_path="${selected_path}${selected_crt}"
             new_key_path="${selected_path}${selected_key_file}"
-            new_domain=$domain
+            new_domain=$selected_domain
             break
         else
             red "无效的选择，请重新输入。"
