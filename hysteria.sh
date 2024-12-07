@@ -78,14 +78,16 @@ inst_cert(){
             # 使用 glob 扩展匹配子目录
             for p in $path; do
                 if [[ -d $p ]]; then
-                    for crt in "$p"*.crt; do
-                        # 检查是否有匹配的 .key 文件
-                        key="${crt%.crt}.key"
-                        if [[ -f $key ]]; then
-                            cert_pairs["$index,$p"]="$(basename "$crt"),$(basename "$key")"
-                            index=$((index + 1))
-                        fi
-                    done
+                    # 查找 fullchain.pem 和 privkey.pem
+                    if [[ -f "${p}fullchain.pem" && -f "${p}privkey.pem" ]]; then
+                        cert_pairs["$index,$p"]="fullchain.pem,privkey.pem"
+                        index=$((index + 1))
+                    fi
+                    # 也可以添加对 cert.pem 和 privkey.pem 的支持
+                    if [[ -f "${p}cert.pem" && -f "${p}privkey.pem" ]]; then
+                        cert_pairs["$index,$p"]="cert.pem,privkey.pem"
+                        index=$((index + 1))
+                    fi
                 fi
             done
         done
@@ -112,7 +114,7 @@ inst_cert(){
                 selected_path=$(echo "$selected_key" | cut -d',' -f2)
                 cert_path="$selected_path$selected_crt"
                 key_path="$selected_path$selected_key_file"
-                domain=$(echo "$selected_crt" | sed 's/\(.*\)\.crt/\1/')
+                domain=$(echo "$selected_crt" | sed 's/\(.*\)\.pem/\1/')
                 hy_domain=$domain
                 break
             else
@@ -121,8 +123,8 @@ inst_cert(){
         done
 
         green "已选择的证书路径："
-        yellow "公钥文件 crt 的路径：$cert_path"
-        yellow "密钥文件 key 的路径：$key_path"
+        yellow "公钥文件 fullchain.pem/cert.pem 的路径：$cert_path"
+        yellow "密钥文件 privkey.pem 的路径：$key_path"
         yellow "证书域名：$domain"
 
         chmod +rw "$cert_path"
@@ -502,13 +504,16 @@ change_cert(){
         # 使用 glob 扩展匹配子目录
         for p in $path; do
             if [[ -d $p ]]; then
-                for crt in "$p"*.crt; do
-                    key="${crt%.crt}.key"
-                    if [[ -f $key ]]; then
-                        cert_pairs["$index,$p"]="$(basename "$crt"),$(basename "$key")"
-                        index=$((index + 1))
-                    fi
-                done
+                # 查找 fullchain.pem 和 privkey.pem
+                if [[ -f "${p}fullchain.pem" && -f "${p}privkey.pem" ]]; then
+                    cert_pairs["$index,$p"]="fullchain.pem,privkey.pem"
+                    index=$((index + 1))
+                fi
+                # 也可以添加对 cert.pem 和 privkey.pem 的支持
+                if [[ -f "${p}cert.pem" && -f "${p}privkey.pem" ]]; then
+                    cert_pairs["$index,$p"]="cert.pem,privkey.pem"
+                    index=$((index + 1))
+                fi
             fi
         done
     done
@@ -535,7 +540,7 @@ change_cert(){
             selected_path=$(echo "$selected_key" | cut -d',' -f2)
             new_cert_path="$selected_path$selected_crt"
             new_key_path="$selected_path$selected_key_file"
-            new_domain=$(echo "$selected_crt" | sed 's/\(.*\)\.crt/\1/')
+            new_domain=$(echo "$selected_crt" | sed 's/\(.*\)\.pem/\1/')
             break
         else
             red "无效的选择，请重新输入。"
