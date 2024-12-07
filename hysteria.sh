@@ -53,119 +53,84 @@ realip(){
 }
 
 inst_cert(){
-    green "Hysteria 2 协议证书申请方式如下："
+    green "Hysteria 2 协议证书安装方式如下："
     echo ""
-    echo -e " ${GREEN}1.${PLAIN} 必应自签证书 ${YELLOW}（默认）${PLAIN}"
-    echo -e " ${GREEN}2.${PLAIN} Acme 脚本自动申请"
-    echo -e " ${GREEN}3.${PLAIN} 自定义证书路径"
+    echo -e " ${GREEN}1.${PLAIN} 自签证书 ${YELLOW}（默认）${PLAIN}"
+    echo -e " ${GREEN}2.${PLAIN} 使用现有证书"
     echo ""
-    read -rp "请输入选项 [1-3]: " certInput
+    read -rp "请输入选项 [1-2]: " certInput
     if [[ $certInput == 2 ]]; then
-        cert_path="/root/cert.crt"
-        key_path="/root/private.key"
+        # 定义常见的证书存储路径
+        CERT_PATHS=(
+            "/etc/ssl/certs/"
+            "/etc/pki/tls/certs/"
+            "/etc/letsencrypt/live/"
+            "/usr/local/share/ca-certificates/"
+            "/etc/hysteria/certs/"
+        )
 
-        chmod -R 777 /root
-        
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        declare -A cert_pairs
+        index=1
 
-        if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
-            domain=$(cat /root/ca.log)
-            green "检测到原有域名：$domain 的证书，正在应用"
-            hy_domain=$domain
-        else
-            WARPv4Status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-            WARPv6Status=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-            if [[ $WARPv4Status =~ on|plus ]] || [[ $WARPv6Status =~ on|plus ]]; then
-                wg-quick down wgcf >/dev/null 2>&1
-                systemctl stop warp-go >/dev/null 2>&1
-                realip
-                wg-quick up wgcf >/dev/null 2>&1
-                systemctl start warp-go >/dev/null 2>&1
-            else
-                realip
+        # 搜索匹配的证书和密钥文件对
+        for path in "${CERT_PATHS[@]}"; do
+            if [[ -d $path ]]; then
+                for crt in "$path"*.crt; do
+                    key="${crt%.crt}.key"
+                    if [[ -f $key ]]; then
+                        cert_pairs["$index,$path"]="$(basename "$crt"),$(basename "$key")"
+                        index=$((index + 1))
+                    fi
+                done
             fi
+        done
 
-            read -p "请输入需要申请证书的域名：" domain
-            [[ -z $domain ]] && red "未输入域名，无法执行操作！" && exit 1
-            green "已输入的域名：$domain" && sleep 1
-            domainIP=$(dig @8.8.8.8 +time=2 +short "$domain" 2>/dev/null)
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]]; then
-                domainIP=$(dig @2001:4860:4860::8888 +time=2 aaaa +short "$domain" 2>/dev/null)
-            fi
-            if echo $domainIP | grep -q "network unreachable\|timed out" || [[ -z $domainIP ]] ; then
-                red "未解析出 IP，请检查域名是否输入有误" 
-                yellow "是否尝试强行匹配？"
-                green "1. 是，将使用强行匹配"
-                green "2. 否，退出脚本"
-                read -p "请输入选项 [1-2]：" ipChoice
-                if [[ $ipChoice == 1 ]]; then
-                    yellow "将尝试强行匹配以申请域名证书"
-                else
-                    red "将退出脚本"
-                    exit 1
-                fi
-            fi
-            # 修改这里的IP比对逻辑，允许多个IP匹配
-            if echo "$domainIP" | grep -qw "$ip"; then
-                ${PACKAGE_INSTALL[int]} curl wget sudo socat openssl
-                if [[ $SYSTEM == "CentOS" ]]; then
-                    ${PACKAGE_INSTALL[int]} cronie
-                    systemctl start crond
-                    systemctl enable crond
-                else
-                    ${PACKAGE_INSTALL[int]} cron
-                    systemctl start cron
-                    systemctl enable cron
-                fi
-                curl https://get.acme.sh | sh -s email=$(date +%s%N | md5sum | cut -c 1-16)@gmail.com
-                source ~/.bashrc
-                bash ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-                bash ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-                if [[ -n $(echo $ip | grep ":") ]]; then
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --listen-v6 --insecure
-                else
-                    bash ~/.acme.sh/acme.sh --issue -d ${domain} --standalone -k ec-256 --insecure
-                fi
-                bash ~/.acme.sh/acme.sh --install-cert -d ${domain} --key-file /root/private.key --fullchain-file /root/cert.crt --ecc
-                if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]]; then
-                    echo $domain > /root/ca.log
-                    sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
-                    echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
-                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
-                    yellow "证书crt文件路径如下: /root/cert.crt"
-                    yellow "私钥key文件路径如下: /root/private.key"
-                    hy_domain=$domain
-                fi
-            else
-                red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
-                green "建议如下："
-                yellow "1. 请确保CloudFlare小云朵为关闭状态(仅限DNS), 其他域名解析或CDN网站设置同理"
-                yellow "2. 请检查DNS解析设置的IP是否为VPS的真实IP"
-                yellow "3. 脚本可能跟不上时代, 建议截图发布到GitHub Issues、GitLab Issues、论坛或TG群询问"
-                exit 1
-            fi
+        if [[ ${#cert_pairs[@]} -eq 0 ]]; then
+            red "未在常见路径中找到匹配的证书和密钥文件对。"
+            exit 1
         fi
-    elif [[ $certInput == 3 ]]; then
-        read -p "请输入公钥文件 crt 的路径：" cert_path
-        yellow "公钥文件 crt 的路径：$cert_path "
-        read -p "请输入密钥文件 key 的路径：" key_path
-        yellow "密钥文件 key 的路径：$key_path "
-        read -p "请输入证书的域名：" domain
-        yellow "证书域名：$domain"
-        hy_domain=$domain
 
-        chmod +rw $cert_path
-        chmod +rw $key_path
+        green "找到以下证书和密钥文件对："
+        for key in "${!cert_pairs[@]}"; do
+            IFS=',' read -r num pair <<< "${cert_pairs[$key]}"
+            IFS=',' read -r crt_file key_file <<< "$pair"
+            echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $(echo $key | cut -d',' -f2)"
+        done
+
+        while true; do
+            read -rp "请输入要使用的证书编号: " selected
+            selected_key=$(echo "${!cert_pairs[@]}" | tr ' ' '\n' | grep "^$selected,")
+            if [[ -n $selected_key ]]; then
+                selected_pair=${cert_pairs[$selected_key]}
+                selected_crt=$(echo "$selected_pair" | cut -d',' -f1)
+                selected_key_file=$(echo "$selected_pair" | cut -d',' -f2)
+                selected_path=$(echo "$selected_key" | cut -d',' -f2)
+                cert_path="$selected_path$selected_crt"
+                key_path="$selected_path$selected_key_file"
+                domain=$(echo "$selected_crt" | sed 's/\(.*\)\.crt/\1/')
+                hy_domain=$domain
+                break
+            else
+                red "无效的选择，请重新输入。"
+            fi
+        done
+
+        green "已选择的证书路径："
+        yellow "公钥文件 crt 的路径：$cert_path"
+        yellow "密钥文件 key 的路径：$key_path"
+        yellow "证书域名：$domain"
+
+        chmod +rw "$cert_path"
+        chmod +rw "$key_path"
     else
-        green "将使用必应自签证书作为 Hysteria 2 的节点证书"
+        green "将使用自签证书作为 Hysteria 2 的节点证书"
 
         cert_path="/etc/hysteria/cert.crt"
         key_path="/etc/hysteria/private.key"
-        openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/private.key
-        openssl req -new -x509 -days 36500 -key /etc/hysteria/private.key -out /etc/hysteria/cert.crt -subj "/CN=www.bing.com"
-        chmod 777 /etc/hysteria/cert.crt
-        chmod 777 /etc/hysteria/private.key
+        openssl ecparam -genkey -name prime256v1 -out "$key_path"
+        openssl req -new -x509 -days 36500 -key "$key_path" -out "$cert_path" -subj "/CN=www.bing.com"
+        chmod 600 "$cert_path"
+        chmod 600 "$key_path"
         hy_domain="www.bing.com"
         domain="www.bing.com"
     fi
@@ -201,15 +166,15 @@ inst_jump(){
         if [[ $firstport -ge $endport ]]; then
             until [[ $firstport -le $endport ]]; do
                 if [[ $firstport -ge $endport ]]; then
-                    red "你设置的起始端口小于末尾端口，请重新输入起始和末尾端口"
+                    red "你设置的起始端口必须小于末尾端口，请重新输入。"
                     read -p "设置范围端口的起始端口 (建议10000-65535之间)：" firstport
                     read -p "设置一个范围端口的末尾端口 (建议10000-65535之间，一定要比上面起始端口大)：" endport
                 fi
             done
         fi
         # 使用 REDIRECT 而非 DNAT 以实现端口跳跃
-        iptables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
-        ip6tables -t nat -A PREROUTING -p udp --dport $firstport:$endport -j REDIRECT --to-ports $port
+        iptables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
+        ip6tables -t nat -A PREROUTING -p udp --dport "$firstport":"$endport" -j REDIRECT --to-ports "$port"
         netfilter-persistent save >/dev/null 2>&1
     else
         red "将继续使用单端口模式"
@@ -384,15 +349,15 @@ proxy-groups:
     type: select
     proxies:
       - 1keji-Hysteria2
-      
+          
 rules:
   - GEOIP,CN,DIRECT
   - MATCH,Proxy
 EOF
     url="hysteria2://$auth_pwd@$last_ip:$last_port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $url > /root/hy/url.txt
+    echo "$url" > /root/hy/url.txt
     nohopurl="hysteria2://$auth_pwd@$last_ip:$port/?insecure=1&sni=$hy_domain#1keji-Hysteria2"
-    echo $nohopurl > /root/hy/url-nohop.txt
+    echo "$nohopurl" > /root/hy/url-nohop.txt
 
     systemctl daemon-reload
     systemctl enable hysteria-server
@@ -514,16 +479,75 @@ change_cert(){
     old_key=$(grep '^key:' /etc/hysteria/config.yaml | awk '{print $2}')
     old_hydomain=$(grep '^sni:' /root/hy/hy-client.yaml | awk '{print $2}')
 
-    inst_cert
+    green "搜索常见的 TLS 证书路径..."
+    CERT_PATHS=(
+        "/etc/ssl/certs/"
+        "/etc/pki/tls/certs/"
+        "/etc/letsencrypt/live/"
+        "/usr/local/share/ca-certificates/"
+        "/etc/hysteria/certs/"
+    )
 
-    sed -i "s#$old_cert#$cert_path#g" /etc/hysteria/config.yaml
-    sed -i "s#$old_key#$key_path#g" /etc/hysteria/config.yaml
-    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.yaml
-    sed -i "s/$old_hydomain/$hy_domain/g" /root/hy/hy-client.json
+    declare -A cert_pairs
+    index=1
+
+    # 搜索匹配的证书和密钥文件对
+    for path in "${CERT_PATHS[@]}"; do
+        if [[ -d $path ]]; then
+            for crt in "$path"*.crt; do
+                key="${crt%.crt}.key"
+                if [[ -f $key ]]; then
+                    cert_pairs["$index,$path"]="$(basename "$crt"),$(basename "$key")"
+                    index=$((index + 1))
+                fi
+            done
+        fi
+    done
+
+    if [[ ${#cert_pairs[@]} -eq 0 ]]; then
+        red "未在常见路径中找到匹配的证书和密钥文件对。"
+        exit 1
+    fi
+
+    green "找到以下证书和密钥文件对："
+    for key in "${!cert_pairs[@]}"; do
+        IFS=',' read -r num pair <<< "${cert_pairs[$key]}"
+        IFS=',' read -r crt_file key_file <<< "$pair"
+        echo -e " ${GREEN}$num.${PLAIN} 证书: $crt_file, 密钥: $key_file, 路径: $(echo $key | cut -d',' -f2)"
+    done
+
+    while true; do
+        read -rp "请输入要使用的证书编号: " selected
+        selected_key=$(echo "${!cert_pairs[@]}" | tr ' ' '\n' | grep "^$selected,")
+        if [[ -n $selected_key ]]; then
+            selected_pair=${cert_pairs[$selected_key]}
+            selected_crt=$(echo "$selected_pair" | cut -d',' -f1)
+            selected_key_file=$(echo "$selected_pair" | cut -d',' -f2)
+            selected_path=$(echo "$selected_key" | cut -d',' -f2)
+            new_cert_path="$selected_path$selected_crt"
+            new_key_path="$selected_path$selected_key_file"
+            new_domain=$(echo "$selected_crt" | sed 's/\(.*\)\.crt/\1/')
+            break
+        else
+            red "无效的选择，请重新输入。"
+        fi
+    done
+
+    sed -i "s#$old_cert#$new_cert_path#g" /etc/hysteria/config.yaml
+    sed -i "s#$old_key#$new_key_path#g" /etc/hysteria/config.yaml
+    sed -i "s/$old_hydomain/$new_domain/g" /root/hy/hy-client.yaml
+    sed -i "s/$old_hydomain/$new_domain/g" /root/hy/hy-client.json
+
+    hy_domain=$new_domain
+    cert_path=$new_cert_path
+    key_path=$new_key_path
+
+    chmod +rw "$cert_path"
+    chmod +rw "$key_path"
 
     stophysteria && starthysteria
 
-    green "Hysteria 2 节点证书类型已成功修改"
+    green "Hysteria 2 节点证书已成功修改为：$cert_path 和 $key_path"
     yellow "请手动更新客户端配置文件以使用节点"
     showconf
 }
@@ -544,7 +568,7 @@ changeconf(){
     green "Hysteria 2 配置变更选择如下:"
     echo -e " ${GREEN}1.${PLAIN} 修改端口"
     echo -e " ${GREEN}2.${PLAIN} 修改密码"
-    echo -e " ${GREEN}3.${PLAIN} 修改证书类型"
+    echo -e " ${GREEN}3.${PLAIN} 修改证书"
     echo -e " ${GREEN}4.${PLAIN} 修改伪装网站"
     echo ""
     read -p " 请选择操作 [1-4]：" confAnswer
@@ -572,7 +596,7 @@ showconf(){
 update_core(){
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
-    
+
     rm -f install_server.sh
 }
 
