@@ -64,10 +64,9 @@ inst_cert(){
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
-        chmod -R 777 /root
-        
-        chmod +rw /root/cert.crt
-        chmod +rw /root/private.key
+        chmod -R 777 /root 2>/dev/null
+        chmod +rw /root/cert.crt 2>/dev/null
+        chmod +rw /root/private.key 2>/dev/null
 
         if [[ -f /root/cert.crt && -f /root/private.key ]] && [[ -s /root/cert.crt && -s /root/private.key ]] && [[ -f /root/ca.log ]]; then
             domain=$(cat /root/ca.log)
@@ -132,10 +131,23 @@ inst_cert(){
                     echo $domain > /root/ca.log
                     sed -i '/--cron/d' /etc/crontab >/dev/null 2>&1
                     echo "0 0 * * * root bash /root/.acme.sh/acme.sh --cron -f >/dev/null 2>&1" >> /etc/crontab
-                    green "证书申请成功! 脚本申请到的证书 (cert.crt) 和私钥 (private.key) 文件已保存到 /root 文件夹下"
-                    yellow "证书crt文件路径如下: /root/cert.crt"
-                    yellow "私钥key文件路径如下: /root/private.key"
+
+                    # === 修复点：将证书和私钥移动到 /etc/hysteria/ 并设置合适权限 ===
+                    mv /root/cert.crt /etc/hysteria/cert.crt
+                    mv /root/private.key /etc/hysteria/private.key
+                    chmod 644 /etc/hysteria/cert.crt
+                    chmod 600 /etc/hysteria/private.key
+                    chown hysteria:hysteria /etc/hysteria/cert.crt
+                    chown hysteria:hysteria /etc/hysteria/private.key
+
+                    green "证书申请成功! 证书和私钥已保存到 /etc/hysteria/ 目录下"
+                    yellow "证书crt文件路径如下: /etc/hysteria/cert.crt"
+                    yellow "私钥key文件路径如下: /etc/hysteria/private.key"
                     hy_domain=$domain
+
+                    # 这里同时需要把脚本中配置使用的路径改成 /etc/hysteria 下，否则会读不到
+                    cert_path="/etc/hysteria/cert.crt"
+                    key_path="/etc/hysteria/private.key"
                 fi
             else
                 red "当前域名解析的IP与当前VPS使用的真实IP不匹配"
@@ -155,8 +167,8 @@ inst_cert(){
         yellow "证书域名：$domain"
         hy_domain=$domain
 
-        chmod +rw $cert_path
-        chmod +rw $key_path
+        chmod +rw $cert_path 2>/dev/null
+        chmod +rw $key_path 2>/dev/null
     else
         green "将使用必应自签证书作为 Hysteria 2 的节点证书"
 
@@ -306,7 +318,7 @@ EOF
         last_ip=$ip
     fi
 
-    mkdir /root/hy
+    mkdir /root/hy 2>/dev/null
     cat << EOF > /root/hy/hy-client.yaml
 server: $last_ip:$last_port
 
@@ -347,7 +359,7 @@ EOF
   },
   "fastOpen": true,
   "socks5": {
-    "listen": "127.0.0.1:7887"  # 修改此处端口号为您想要的端口，例如7887
+    "listen": "127.0.0.1:7887"
   },
   "transport": {
     "udp": {
@@ -572,7 +584,6 @@ showconf(){
 update_core(){
     wget -N https://raw.githubusercontent.com/1keji/hysteria2-install/main/install_server.sh
     bash install_server.sh
-    
     rm -f install_server.sh
 }
 
@@ -609,3 +620,4 @@ menu() {
 }
 
 menu
+
