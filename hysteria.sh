@@ -61,6 +61,15 @@ inst_cert(){
     echo ""
     read -rp "请输入选项 [1-3]: " certInput
     if [[ $certInput == 2 ]]; then
+        # --- 新增：检查dnsutils，如果没有则安装 ---
+        if ! command -v dig >/dev/null 2>&1; then
+            yellow "未检测到 dnsutils，开始为你安装..."
+            ${PACKAGE_UPDATE[int]}
+            ${PACKAGE_INSTALL[int]} dnsutils
+            green "dnsutils 安装完成。"
+        fi
+        # --- 新增结束 ---
+
         cert_path="/root/cert.crt"
         key_path="/root/private.key"
 
@@ -620,4 +629,3 @@ menu() {
 }
 
 menu
-
